@@ -1,5 +1,5 @@
 # app.py
-# Streamlit Price Compare (SerpAPI) + INR conversion + CSV logging + defensive DB writes
+# Streamlit Price Compare (SerpAPI) + INR conversion + CSV logging + defensive DB writes + migration
 # Deploy on Streamlit Cloud. Add SERPAPI_KEY to Streamlit Secrets.
 #
 # Requirements: streamlit, pandas, requests, lightgbm (optional)
@@ -34,7 +34,7 @@ EXCHANGE_API = "https://api.exchangerate.host/latest?base=USD&symbols=INR"
 st.set_page_config(page_title="Best Deal Finder (SerpAPI) — INR", layout="wide")
 # ----------------------------
 
-st.title("🛒 Best Deal Finder — SerpAPI + INR conversion + CSV logging (defensive DB writes)")
+st.title("🛒 Best Deal Finder — SerpAPI + INR conversion + CSV logging (with DB migration)")
 
 # Load secrets (Streamlit Cloud)
 SERPAPI_KEY = ""
@@ -68,7 +68,7 @@ def clean_price_string(p):
     s = str(p).strip()
     # Remove non-printables
     s = s.replace('\u200b','').replace('\xa0',' ')
-    # If it contains '₹' or 'Rs' or 'INR'
+    # If it contains '₹' or "Rs" or 'INR'
     if "₹" in s or "rs" in s.lower() or "inr" in s.lower():
         num = re.sub(r"[^\d.,]", "", s)
         num = num.replace(",", "")
@@ -105,30 +105,74 @@ def to_inr(value, currency, usd_inr_rate):
     # UNKNOWN: assume INR (best-effort)
     return float(value)
 
+# ---------- DB migration helper ----------
+def migrate_db(conn):
+    """
+    Ensure the 'results' table has the required columns. Add missing columns safely.
+    This is idempotent and safe for existing data.
+    """
+    cur = conn.cursor()
+    # If results table doesn't exist, create it in full schema
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='results'")
+    if not cur.fetchone():
+        cur.execute("""
+        CREATE TABLE results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            search_id INTEGER,
+            title TEXT,
+            store TEXT,
+            raw_price TEXT,
+            parsed_currency TEXT,
+            price_in_inr REAL,
+            rating REAL,
+            reviews INTEGER,
+            link TEXT,
+            image TEXT,
+            score REAL,
+            created_at TEXT
+        )
+        """)
+        conn.commit()
+        return
+
+    # Get existing columns
+    cur.execute("PRAGMA table_info(results)")
+    cols = [row[1] for row in cur.fetchall()]  # name is at index 1
+
+    # Desired columns and types
+    desired = {
+        "raw_price": "TEXT",
+        "parsed_currency": "TEXT",
+        "price_in_inr": "REAL",
+        "link": "TEXT",
+        "image": "TEXT",
+        "score": "REAL"
+    }
+
+    for col, coltype in desired.items():
+        if col not in cols:
+            try:
+                cur.execute(f"ALTER TABLE results ADD COLUMN {col} {coltype}")
+            except Exception as e:
+                # log and continue
+                try:
+                    with open(BAD_ROWS_LOG, "a", encoding="utf8") as f:
+                        f.write(f"{datetime.utcnow().isoformat()} | MIGRATION ERROR adding column {col}: {e}\n")
+                except Exception:
+                    pass
+    conn.commit()
+
 # ---------- DB & CSV helpers ----------
 def init_db(path=DB_PATH):
     conn = sqlite3.connect(path, check_same_thread=False)
+    # perform migration / ensure schema
+    migrate_db(conn)
+    # also ensure searches and purchases exist
     cur = conn.cursor()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS searches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         query TEXT,
-        created_at TEXT
-    )""")
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        search_id INTEGER,
-        title TEXT,
-        store TEXT,
-        raw_price TEXT,
-        parsed_currency TEXT,
-        price_in_inr REAL,
-        rating REAL,
-        reviews INTEGER,
-        link TEXT,
-        image TEXT,
-        score REAL,
         created_at TEXT
     )""")
     cur.execute("""
@@ -156,25 +200,19 @@ def log_search(query):
     db_conn.commit()
     return cur.lastrowid
 
-# Defensive log_results implementation
+# Defensive log_results implementation (keeps same safe behavior)
 def log_results(search_id, results):
-    """
-    Robustly insert rows into results table.
-    Coerces/normalizes values, skips bad rows and logs them to bad_rows.log and Streamlit.
-    """
     cur = db_conn.cursor()
     ts = datetime.utcnow().isoformat()
     bad_log_path = BAD_ROWS_LOG
 
     for r in results:
         try:
-            # Normalize/clean each field (force types)
             title = str(r.get("title") or "")[:1000]
             store = str(r.get("store") or "")[:200]
             raw_price = str(r.get("raw_price") or "")[:200]
             parsed_currency = str(r.get("parsed_currency") or "")[:50]
 
-            # price_in_inr: allow NULL if not parseable
             price_in_inr = r.get("price_in_inr")
             if price_in_inr in (None, "", "None"):
                 price_in_inr = None
@@ -184,14 +222,12 @@ def log_results(search_id, results):
                 except Exception:
                     price_in_inr = None
 
-            # rating -> float
             rating = r.get("rating") if r.get("rating") not in (None, "") else 0.0
             try:
                 rating = float(rating)
             except Exception:
                 rating = 0.0
 
-            # reviews -> int
             reviews = r.get("reviews") if r.get("reviews") not in (None, "") else 0
             try:
                 reviews = int(reviews)
@@ -209,7 +245,6 @@ def log_results(search_id, results):
             except Exception:
                 score = 0.0
 
-            # Execute INSERT using parameterized query
             cur.execute("""
                 INSERT INTO results
                 (search_id, title, store, raw_price, parsed_currency, price_in_inr, rating, reviews, link, image, score, created_at)
@@ -217,20 +252,17 @@ def log_results(search_id, results):
             """, (search_id, title, store, raw_price, parsed_currency, price_in_inr, rating, reviews, link, image, score, ts))
 
         except Exception as exc:
-            # Log the error (append to a simple local log) and continue
             try:
                 with open(bad_log_path, "a", encoding="utf8") as f:
                     f.write(f"{datetime.utcnow().isoformat()} | ERROR: {exc} | ROW: {repr(r)}\n")
             except Exception:
                 pass
-            # Surface a small non-blocking message to Streamlit logs
             try:
                 st.warning("Skipped one result row due to logging error. Check bad_rows.log for details.")
             except Exception:
                 print(f"Skipped one result row due to error: {exc}")
             continue
 
-    # commit once after loop
     db_conn.commit()
 
 def log_purchase(result_row_id, search_id, bought_price):
@@ -263,7 +295,6 @@ def fetch_serpapi(query, serpapi_key, max_results=MAX_SERPAPI_RESULTS, usd_inr_r
         price_in_inr = to_inr(value, currency, usd_inr_rate) if value is not None else None
 
         if price_in_inr is None:
-            # Skip items we cannot parse price for
             continue
 
         out.append({
@@ -401,7 +432,7 @@ if query:
             append_csv(logged_rows, CSV_PATH)
         except Exception as e:
             st.warning(f"Failed appending CSV: {e}")
-    # Use defensive DB logger
+    # Use defensive DB logger (handles missing columns gracefully)
     log_results(search_id, logged_rows)
 
     st.subheader("🏆 Top 3 (plausible) Deals")
@@ -427,7 +458,7 @@ if query:
             if st.button(f"Bought — #{idx+1}", key=f"buy_top_{idx}_{time.time()}"):
                 try:
                     cur = db_conn.cursor()
-                    cur.execute("SELECT id FROM results WHERE search_id = ? AND title = ? AND price_in_inr = ? ORDER BY id DESC LIMIT 1",
+                    cur.execute("SELECT id FROM results WHERE search_id = ? AND title = ? AND COALESCE(price_in_inr,0) = ? ORDER BY id DESC LIMIT 1",
                                 (search_id, row.get("title"), float(row.get("price_in_inr") or 0)))
                     res = cur.fetchone()
                     if res:
@@ -522,4 +553,4 @@ if Path(BAD_ROWS_LOG).exists():
     except Exception as e:
         st.error(f"Cannot read bad_rows.log: {e}")
 
-st.markdown("Notes: This version uses defensive DB writes. If SerpAPI returns odd/malformed fields, those rows are skipped and logged to bad_rows.log (visible here). Adjust PLAUSIBILITY_MULTIPLIER near the top to be stricter/looser about suspiciously cheap results.")
+st.markdown("Notes: This version auto-migrates your DB (adds missing columns) at startup. If something else fails, check bad_rows.log or paste a few lines here and I'll tune the parser.")
