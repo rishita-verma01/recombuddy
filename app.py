@@ -1,467 +1,98 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": 3,
-   "id": "985e9dfe-7049-4e26-ac42-1b2bc8453c33",
-   "metadata": {},
-   "outputs": [
-    {
-     "name": "stderr",
-     "output_type": "stream",
-     "text": [
-      "2025-11-14 14:26:45.939 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-      "2025-11-14 14:26:45.939 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-      "2025-11-14 14:26:46.199 \n",
-      "  \u001b[33m\u001b[1mWarning:\u001b[0m to view this Streamlit app on a browser, run it with the following\n",
-      "  command:\n",
-      "\n",
-      "    streamlit run C:\\Users\\verma\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\ipykernel_launcher.py [ARGUMENTS]\n",
-      "2025-11-14 14:26:46.199 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-      "2025-11-14 14:26:46.199 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n"
-     ]
-    },
-    {
-     "ename": "StreamlitSecretNotFoundError",
-     "evalue": "No secrets found. Valid paths for a secrets.toml file or secret directories are: C:\\Users\\verma\\.streamlit\\secrets.toml, C:\\Users\\verma\\OneDrive\\Desktop\\recommendation site\\.streamlit\\secrets.toml",
-     "output_type": "error",
-     "traceback": [
-      "\u001b[1;31m---------------------------------------------------------------------------\u001b[0m",
-      "\u001b[1;31mStreamlitSecretNotFoundError\u001b[0m              Traceback (most recent call last)",
-      "Cell \u001b[1;32mIn[3], line 9\u001b[0m\n\u001b[0;32m      5\u001b[0m st\u001b[38;5;241m.\u001b[39mset_page_config(page_title\u001b[38;5;241m=\u001b[39m\u001b[38;5;124m\"\u001b[39m\u001b[38;5;124mBest Deal Finder\u001b[39m\u001b[38;5;124m\"\u001b[39m, layout\u001b[38;5;241m=\u001b[39m\u001b[38;5;124m\"\u001b[39m\u001b[38;5;124mwide\u001b[39m\u001b[38;5;124m\"\u001b[39m)\n\u001b[0;32m      7\u001b[0m st\u001b[38;5;241m.\u001b[39mtitle(\u001b[38;5;124m\"\u001b[39m\u001b[38;5;124m🛒 Best Deal Finder (Free Price Comparison Tool)\u001b[39m\u001b[38;5;124m\"\u001b[39m)\n\u001b[1;32m----> 9\u001b[0m SERPAPI_KEY \u001b[38;5;241m=\u001b[39m \u001b[43mst\u001b[49m\u001b[38;5;241;43m.\u001b[39;49m\u001b[43msecrets\u001b[49m\u001b[43m[\u001b[49m\u001b[38;5;124;43m\"\u001b[39;49m\u001b[38;5;124;43mSERPAPI_KEY\u001b[39;49m\u001b[38;5;124;43m\"\u001b[39;49m\u001b[43m]\u001b[49m  \n\u001b[0;32m     11\u001b[0m \u001b[38;5;28;01mdef\u001b[39;00m \u001b[38;5;21mfetch_prices\u001b[39m(query):\n\u001b[0;32m     12\u001b[0m     url \u001b[38;5;241m=\u001b[39m \u001b[38;5;124m\"\u001b[39m\u001b[38;5;124mhttps://serpapi.com/search.json\u001b[39m\u001b[38;5;124m\"\u001b[39m\n",
-      "File \u001b[1;32m~\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\streamlit\\runtime\\secrets.py:474\u001b[0m, in \u001b[0;36mSecrets.__getitem__\u001b[1;34m(self, key)\u001b[0m\n\u001b[0;32m    468\u001b[0m \u001b[38;5;250m\u001b[39m\u001b[38;5;124;03m\"\"\"Return the value with the given key. If no such key\u001b[39;00m\n\u001b[0;32m    469\u001b[0m \u001b[38;5;124;03mexists, raise a KeyError.\u001b[39;00m\n\u001b[0;32m    470\u001b[0m \n\u001b[0;32m    471\u001b[0m \u001b[38;5;124;03mThread-safe.\u001b[39;00m\n\u001b[0;32m    472\u001b[0m \u001b[38;5;124;03m\"\"\"\u001b[39;00m\n\u001b[0;32m    473\u001b[0m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[1;32m--> 474\u001b[0m     value \u001b[38;5;241m=\u001b[39m \u001b[38;5;28;43mself\u001b[39;49m\u001b[38;5;241;43m.\u001b[39;49m\u001b[43m_parse\u001b[49m\u001b[43m(\u001b[49m\u001b[43m)\u001b[49m[key]\n\u001b[0;32m    475\u001b[0m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(value, Mapping):\n\u001b[0;32m    476\u001b[0m         \u001b[38;5;28;01mreturn\u001b[39;00m value\n",
-      "File \u001b[1;32m~\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\streamlit\\runtime\\secrets.py:376\u001b[0m, in \u001b[0;36mSecrets._parse\u001b[1;34m(self)\u001b[0m\n\u001b[0;32m    370\u001b[0m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m found_secrets_file:\n\u001b[0;32m    371\u001b[0m     error_msg \u001b[38;5;241m=\u001b[39m (\n\u001b[0;32m    372\u001b[0m         secret_error_messages_singleton\u001b[38;5;241m.\u001b[39mget_no_secrets_found_message(\n\u001b[0;32m    373\u001b[0m             file_paths\n\u001b[0;32m    374\u001b[0m         )\n\u001b[0;32m    375\u001b[0m     )\n\u001b[1;32m--> 376\u001b[0m     \u001b[38;5;28;01mraise\u001b[39;00m StreamlitSecretNotFoundError(error_msg)\n\u001b[0;32m    378\u001b[0m \u001b[38;5;28;01mfor\u001b[39;00m k, v \u001b[38;5;129;01min\u001b[39;00m secrets\u001b[38;5;241m.\u001b[39mitems():\n\u001b[0;32m    379\u001b[0m     \u001b[38;5;28mself\u001b[39m\u001b[38;5;241m.\u001b[39m_maybe_set_environment_variable(k, v)\n",
-      "\u001b[1;31mStreamlitSecretNotFoundError\u001b[0m: No secrets found. Valid paths for a secrets.toml file or secret directories are: C:\\Users\\verma\\.streamlit\\secrets.toml, C:\\Users\\verma\\OneDrive\\Desktop\\recommendation site\\.streamlit\\secrets.toml"
-     ]
+import streamlit as st
+import requests
+import pandas as pd
+
+st.set_page_config(page_title="Best Deal Finder", layout="wide")
+
+st.title("🛒 Best Deal Finder (Free Price Comparison Tool)")
+
+SERPAPI_KEY = st.secrets["SERPAPI_KEY"]  # Add in Streamlit Secrets
+
+def fetch_prices(query):
+    url = "https://serpapi.com/search.json"
+    params = {
+        "engine": "google_shopping",
+        "q": query,
+        "api_key": SERPAPI_KEY,
     }
-   ],
-   "source": [
-    "import streamlit as st\n",
-    "import requests\n",
-    "import pandas as pd\n",
-    "\n",
-    "st.set_page_config(page_title=\"Best Deal Finder\", layout=\"wide\")\n",
-    "\n",
-    "st.title(\"🛒 Best Deal Finder (Free Price Comparison Tool)\")\n",
-    "\n",
-    "SERPAPI_KEY = st.secrets[\"SERPAPI_KEY\"]  \n",
-    "\n",
-    "def fetch_prices(query):\n",
-    "    url = \"https://serpapi.com/search.json\"\n",
-    "    params = {\n",
-    "        \"engine\": \"google_shopping\",\n",
-    "        \"q\": query,\n",
-    "        \"b8facb5f7c78f0f5ef30abd7a0a09c45a0ea4877\": SERPAPI_KEY,\n",
-    "    }\n",
-    "\n",
-    "    response = requests.get(url, params=params)\n",
-    "    data = response.json()\n",
-    "\n",
-    "    results = []\n",
-    "\n",
-    "    if \"shopping_results\" not in data:\n",
-    "        return []\n",
-    "\n",
-    "    for item in data[\"shopping_results\"]:\n",
-    "        store = item.get(\"source\", \"\")\n",
-    "        price = item.get(\"price\", \"\")\n",
-    "        link = item.get(\"link\", \"\")\n",
-    "        title = item.get(\"title\", \"\")\n",
-    "        rating = item.get(\"rating\", 0)\n",
-    "        reviews = item.get(\"reviews\", 0)\n",
-    "        thumbnail = item.get(\"thumbnail\", \"\")\n",
-    "\n",
-    "        try:\n",
-    "            price_value = float(price.replace(\"₹\", \"\").replace(\",\", \"\").strip())\n",
-    "        except:\n",
-    "            continue\n",
-    "\n",
-    "        results.append({\n",
-    "            \"title\": title,\n",
-    "            \"store\": store,\n",
-    "            \"price\": price_value,\n",
-    "            \"rating\": rating,\n",
-    "            \"reviews\": reviews,\n",
-    "            \"link\": link,\n",
-    "            \"image\": thumbnail\n",
-    "        })\n",
-    "\n",
-    "    return results\n",
-    "\n",
-    "\n",
-    "def rank_results(results):\n",
-    "    if not results:\n",
-    "        return []\n",
-    "\n",
-    "    df = pd.DataFrame(results)\n",
-    "\n",
-    "    df[\"score\"] = (\n",
-    "        (df[\"price\"].max() - df[\"price\"]) * 0.6 +    # lower price = better\n",
-    "        (df[\"rating\"].fillna(0)) * 0.3 +             # rating helpful\n",
-    "        (df[\"reviews\"].fillna(0)) * 0.1              # more reviews = trust\n",
-    "    )\n",
-    "\n",
-    "    df = df.sort_values(by=\"score\", ascending=False)\n",
-    "    return df\n",
-    "\n",
-    "\n",
-    "query = st.text_input(\"Enter product name:\", placeholder=\"Example: iPhone 13, earphones, laptop stand\")\n",
-    "\n",
-    "if query:\n",
-    "    with st.spinner(\"Fetching prices... please wait ⏳\"):\n",
-    "        data = fetch_prices(query)\n",
-    "\n",
-    "    if not data:\n",
-    "        st.error(\"No data found. Try another product.\")\n",
-    "    else:\n",
-    "        ranked = rank_results(data)\n",
-    "\n",
-    "        st.subheader(\"🏆 Top 3 Best Deals\")\n",
-    "        top3 = ranked.head(3)\n",
-    "\n",
-    "        for _, row in top3.iterrows():\n",
-    "            col1, col2 = st.columns([1, 4])\n",
-    "            with col1:\n",
-    "                if row[\"image\"]:\n",
-    "                    st.image(row[\"image\"], width=120)\n",
-    "            with col2:\n",
-    "                st.markdown(f\"### {row['title']}\")\n",
-    "                st.markdown(f\"**Store:** {row['store']}\")\n",
-    "                st.markdown(f\"**Price:** ₹{row['price']:,}\")\n",
-    "                st.markdown(f\"[🔗 View Deal]({row['link']})\")\n",
-    "\n",
-    "            st.markdown(\"---\")\n",
-    "\n",
-    "        st.subheader(\"📦 All Results\")\n",
-    "        st.dataframe(ranked[[\"title\", \"store\", \"price\", \"rating\", \"reviews\", \"link\"]])\n"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 2,
-   "id": "53960cc7-2e5d-4a48-b8ed-e3b19f2cabba",
-   "metadata": {},
-   "outputs": [
-    {
-     "name": "stdout",
-     "output_type": "stream",
-     "text": [
-      "Defaulting to user installation because normal site-packages is not writeable\n",
-      "Collecting streamlit\n",
-      "  Downloading streamlit-1.51.0-py3-none-any.whl.metadata (9.5 kB)\n",
-      "Collecting altair!=5.4.0,!=5.4.1,<6,>=4.0 (from streamlit)\n",
-      "  Downloading altair-5.5.0-py3-none-any.whl.metadata (11 kB)\n",
-      "Requirement already satisfied: blinker<2,>=1.5.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (1.9.0)\n",
-      "Collecting cachetools<7,>=4.0 (from streamlit)\n",
-      "  Downloading cachetools-6.2.2-py3-none-any.whl.metadata (5.6 kB)\n",
-      "Requirement already satisfied: click<9,>=7.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (8.1.8)\n",
-      "Requirement already satisfied: numpy<3,>=1.23 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (2.2.1)\n",
-      "Requirement already satisfied: packaging<26,>=20 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (24.2)\n",
-      "Requirement already satisfied: pandas<3,>=1.4.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (2.3.3)\n",
-      "Requirement already satisfied: pillow<13,>=7.1.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (12.0.0)\n",
-      "Collecting protobuf<7,>=3.20 (from streamlit)\n",
-      "  Downloading protobuf-6.33.1-cp310-abi3-win_amd64.whl.metadata (593 bytes)\n",
-      "Collecting pyarrow<22,>=7.0 (from streamlit)\n",
-      "  Downloading pyarrow-21.0.0-cp312-cp312-win_amd64.whl.metadata (3.4 kB)\n",
-      "Requirement already satisfied: requests<3,>=2.27 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (2.32.3)\n",
-      "Collecting tenacity<10,>=8.1.0 (from streamlit)\n",
-      "  Downloading tenacity-9.1.2-py3-none-any.whl.metadata (1.2 kB)\n",
-      "Collecting toml<2,>=0.10.1 (from streamlit)\n",
-      "  Downloading toml-0.10.2-py2.py3-none-any.whl.metadata (7.1 kB)\n",
-      "Requirement already satisfied: typing-extensions<5,>=4.4.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (4.12.2)\n",
-      "Collecting watchdog<7,>=2.1.5 (from streamlit)\n",
-      "  Downloading watchdog-6.0.0-py3-none-win_amd64.whl.metadata (44 kB)\n",
-      "Collecting gitpython!=3.1.19,<4,>=3.0.7 (from streamlit)\n",
-      "  Downloading gitpython-3.1.45-py3-none-any.whl.metadata (13 kB)\n",
-      "Collecting pydeck<1,>=0.8.0b4 (from streamlit)\n",
-      "  Downloading pydeck-0.9.1-py2.py3-none-any.whl.metadata (4.1 kB)\n",
-      "Requirement already satisfied: tornado!=6.5.0,<7,>=6.0.3 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from streamlit) (6.4.2)\n",
-      "Requirement already satisfied: jinja2 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (3.1.5)\n",
-      "Requirement already satisfied: jsonschema>=3.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (4.23.0)\n",
-      "Collecting narwhals>=1.14.2 (from altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit)\n",
-      "  Downloading narwhals-2.11.0-py3-none-any.whl.metadata (11 kB)\n",
-      "Requirement already satisfied: colorama in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from click<9,>=7.0->streamlit) (0.4.6)\n",
-      "Collecting gitdb<5,>=4.0.1 (from gitpython!=3.1.19,<4,>=3.0.7->streamlit)\n",
-      "  Downloading gitdb-4.0.12-py3-none-any.whl.metadata (1.2 kB)\n",
-      "Collecting smmap<6,>=3.0.1 (from gitdb<5,>=4.0.1->gitpython!=3.1.19,<4,>=3.0.7->streamlit)\n",
-      "  Downloading smmap-5.0.2-py3-none-any.whl.metadata (4.3 kB)\n",
-      "Requirement already satisfied: python-dateutil>=2.8.2 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from pandas<3,>=1.4.0->streamlit) (2.9.0.post0)\n",
-      "Requirement already satisfied: pytz>=2020.1 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from pandas<3,>=1.4.0->streamlit) (2024.2)\n",
-      "Requirement already satisfied: tzdata>=2022.7 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from pandas<3,>=1.4.0->streamlit) (2025.2)\n",
-      "Requirement already satisfied: charset-normalizer<4,>=2 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from requests<3,>=2.27->streamlit) (3.4.1)\n",
-      "Requirement already satisfied: idna<4,>=2.5 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from requests<3,>=2.27->streamlit) (3.10)\n",
-      "Requirement already satisfied: urllib3<3,>=1.21.1 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from requests<3,>=2.27->streamlit) (2.3.0)\n",
-      "Requirement already satisfied: certifi>=2017.4.17 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from requests<3,>=2.27->streamlit) (2024.12.14)\n",
-      "Requirement already satisfied: MarkupSafe>=2.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from jinja2->altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (3.0.2)\n",
-      "Requirement already satisfied: attrs>=22.2.0 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from jsonschema>=3.0->altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (24.3.0)\n",
-      "Requirement already satisfied: jsonschema-specifications>=2023.03.6 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from jsonschema>=3.0->altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (2024.10.1)\n",
-      "Requirement already satisfied: referencing>=0.28.4 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from jsonschema>=3.0->altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (0.35.1)\n",
-      "Requirement already satisfied: rpds-py>=0.7.1 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from jsonschema>=3.0->altair!=5.4.0,!=5.4.1,<6,>=4.0->streamlit) (0.22.3)\n",
-      "Requirement already satisfied: six>=1.5 in c:\\users\\verma\\appdata\\local\\packages\\pythonsoftwarefoundation.python.3.12_qbz5n2kfra8p0\\localcache\\local-packages\\python312\\site-packages (from python-dateutil>=2.8.2->pandas<3,>=1.4.0->streamlit) (1.17.0)\n",
-      "Downloading streamlit-1.51.0-py3-none-any.whl (10.2 MB)\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   ---------------------------------------- 0.0/10.2 MB ? eta -:--:--\n",
-      "   - -------------------------------------- 0.3/10.2 MB ? eta -:--:--\n",
-      "   - -------------------------------------- 0.3/10.2 MB ? eta -:--:--\n",
-      "   - -------------------------------------- 0.3/10.2 MB ? eta -:--:--\n",
-      "   -- ------------------------------------- 0.5/10.2 MB 329.3 kB/s eta 0:00:30\n",
-      "   -- ------------------------------------- 0.5/10.2 MB 329.3 kB/s eta 0:00:30\n",
-      "   -- ------------------------------------- 0.5/10.2 MB 329.3 kB/s eta 0:00:30\n",
-      "   --- ------------------------------------ 0.8/10.2 MB 360.8 kB/s eta 0:00:27\n",
-      "   --- ------------------------------------ 0.8/10.2 MB 360.8 kB/s eta 0:00:27\n",
-      "   --- ------------------------------------ 0.8/10.2 MB 360.8 kB/s eta 0:00:27\n",
-      "   ---- ----------------------------------- 1.0/10.2 MB 387.2 kB/s eta 0:00:24\n",
-      "   ---- ----------------------------------- 1.0/10.2 MB 387.2 kB/s eta 0:00:24\n",
-      "   ---- ----------------------------------- 1.0/10.2 MB 387.2 kB/s eta 0:00:24\n",
-      "   ----- ---------------------------------- 1.3/10.2 MB 406.7 kB/s eta 0:00:22\n",
-      "   ----- ---------------------------------- 1.3/10.2 MB 406.7 kB/s eta 0:00:22\n",
-      "   ------ --------------------------------- 1.6/10.2 MB 428.1 kB/s eta 0:00:21\n",
-      "   ------ --------------------------------- 1.6/10.2 MB 428.1 kB/s eta 0:00:21\n",
-      "   ------- -------------------------------- 1.8/10.2 MB 449.4 kB/s eta 0:00:19\n",
-      "   ------- -------------------------------- 1.8/10.2 MB 449.4 kB/s eta 0:00:19\n",
-      "   -------- ------------------------------- 2.1/10.2 MB 471.7 kB/s eta 0:00:18\n",
-      "   -------- ------------------------------- 2.1/10.2 MB 471.7 kB/s eta 0:00:18\n",
-      "   --------- ------------------------------ 2.4/10.2 MB 489.9 kB/s eta 0:00:16\n",
-      "   ---------- ----------------------------- 2.6/10.2 MB 511.9 kB/s eta 0:00:15\n",
-      "   ---------- ----------------------------- 2.6/10.2 MB 511.9 kB/s eta 0:00:15\n",
-      "   ----------- ---------------------------- 2.9/10.2 MB 532.7 kB/s eta 0:00:14\n",
-      "   ----------- ---------------------------- 2.9/10.2 MB 532.7 kB/s eta 0:00:14\n",
-      "   ------------ --------------------------- 3.1/10.2 MB 550.9 kB/s eta 0:00:13\n",
-      "   ------------- -------------------------- 3.4/10.2 MB 570.4 kB/s eta 0:00:12\n",
-      "   -------------- ------------------------- 3.7/10.2 MB 588.0 kB/s eta 0:00:12\n",
-      "   -------------- ------------------------- 3.7/10.2 MB 588.0 kB/s eta 0:00:12\n",
-      "   --------------- ------------------------ 3.9/10.2 MB 603.8 kB/s eta 0:00:11\n",
-      "   ---------------- ----------------------- 4.2/10.2 MB 619.9 kB/s eta 0:00:10\n",
-      "   ----------------- ---------------------- 4.5/10.2 MB 639.2 kB/s eta 0:00:09\n",
-      "   ------------------ --------------------- 4.7/10.2 MB 655.7 kB/s eta 0:00:09\n",
-      "   ------------------- -------------------- 5.0/10.2 MB 671.1 kB/s eta 0:00:08\n",
-      "   -------------------- ------------------- 5.2/10.2 MB 687.0 kB/s eta 0:00:08\n",
-      "   --------------------- ------------------ 5.5/10.2 MB 703.5 kB/s eta 0:00:07\n",
-      "   ---------------------- ----------------- 5.8/10.2 MB 722.0 kB/s eta 0:00:07\n",
-      "   ----------------------- ---------------- 6.0/10.2 MB 738.2 kB/s eta 0:00:06\n",
-      "   ------------------------ --------------- 6.3/10.2 MB 752.3 kB/s eta 0:00:06\n",
-      "   -------------------------- ------------- 6.8/10.2 MB 784.0 kB/s eta 0:00:05\n",
-      "   --------------------------- ------------ 7.1/10.2 MB 800.4 kB/s eta 0:00:04\n",
-      "   ---------------------------- ----------- 7.3/10.2 MB 816.3 kB/s eta 0:00:04\n",
-      "   ------------------------------ --------- 7.9/10.2 MB 846.2 kB/s eta 0:00:03\n",
-      "   ------------------------------- -------- 8.1/10.2 MB 863.4 kB/s eta 0:00:03\n",
-      "   -------------------------------- ------- 8.4/10.2 MB 877.1 kB/s eta 0:00:03\n",
-      "   ----------------------------------- ---- 8.9/10.2 MB 906.2 kB/s eta 0:00:02\n",
-      "   ------------------------------------ --- 9.2/10.2 MB 921.6 kB/s eta 0:00:02\n",
-      "   -------------------------------------- - 9.7/10.2 MB 949.7 kB/s eta 0:00:01\n",
-      "   ---------------------------------------- 10.2/10.2 MB 972.8 kB/s  0:00:11\n",
-      "Downloading altair-5.5.0-py3-none-any.whl (731 kB)\n",
-      "   ---------------------------------------- 0.0/731.2 kB ? eta -:--:--\n",
-      "   -------------- ------------------------- 262.1/731.2 kB ? eta -:--:--\n",
-      "   ---------------------------- ----------- 524.3/731.2 kB 1.4 MB/s eta 0:00:01\n",
-      "   ---------------------------------------- 731.2/731.2 kB 1.4 MB/s  0:00:00\n",
-      "Downloading cachetools-6.2.2-py3-none-any.whl (11 kB)\n",
-      "Downloading gitpython-3.1.45-py3-none-any.whl (208 kB)\n",
-      "Downloading gitdb-4.0.12-py3-none-any.whl (62 kB)\n",
-      "Downloading protobuf-6.33.1-cp310-abi3-win_amd64.whl (436 kB)\n",
-      "Downloading pyarrow-21.0.0-cp312-cp312-win_amd64.whl (26.2 MB)\n",
-      "   ---------------------------------------- 0.0/26.2 MB ? eta -:--:--\n",
-      "    --------------------------------------- 0.5/26.2 MB 2.8 MB/s eta 0:00:10\n",
-      "   - -------------------------------------- 0.8/26.2 MB 2.4 MB/s eta 0:00:11\n",
-      "   -- ------------------------------------- 1.6/26.2 MB 2.6 MB/s eta 0:00:10\n",
-      "   --- ------------------------------------ 2.1/26.2 MB 2.6 MB/s eta 0:00:10\n",
-      "   ---- ----------------------------------- 2.6/26.2 MB 2.6 MB/s eta 0:00:10\n",
-      "   ---- ----------------------------------- 3.1/26.2 MB 2.7 MB/s eta 0:00:09\n",
-      "   ------ --------------------------------- 3.9/26.2 MB 2.7 MB/s eta 0:00:09\n",
-      "   ------ --------------------------------- 4.5/26.2 MB 2.8 MB/s eta 0:00:08\n",
-      "   -------- ------------------------------- 5.2/26.2 MB 2.9 MB/s eta 0:00:08\n",
-      "   -------- ------------------------------- 5.2/26.2 MB 2.9 MB/s eta 0:00:08\n",
-      "   ---------- ----------------------------- 6.8/26.2 MB 3.0 MB/s eta 0:00:07\n",
-      "   ----------- ---------------------------- 7.6/26.2 MB 3.1 MB/s eta 0:00:07\n",
-      "   ------------ --------------------------- 8.4/26.2 MB 3.1 MB/s eta 0:00:06\n",
-      "   -------------- ------------------------- 9.2/26.2 MB 3.2 MB/s eta 0:00:06\n",
-      "   -------------- ------------------------- 9.7/26.2 MB 3.2 MB/s eta 0:00:06\n",
-      "   ---------------- ----------------------- 10.7/26.2 MB 3.2 MB/s eta 0:00:05\n",
-      "   ------------------ --------------------- 11.8/26.2 MB 3.3 MB/s eta 0:00:05\n",
-      "   ------------------- -------------------- 12.6/26.2 MB 3.4 MB/s eta 0:00:05\n",
-      "   -------------------- ------------------- 13.6/26.2 MB 3.4 MB/s eta 0:00:04\n",
-      "   ---------------------- ----------------- 14.7/26.2 MB 3.5 MB/s eta 0:00:04\n",
-      "   ----------------------- ---------------- 15.2/26.2 MB 3.6 MB/s eta 0:00:04\n",
-      "   ------------------------- -------------- 16.5/26.2 MB 3.6 MB/s eta 0:00:03\n",
-      "   -------------------------- ------------- 17.6/26.2 MB 3.7 MB/s eta 0:00:03\n",
-      "   ---------------------------- ----------- 18.6/26.2 MB 3.7 MB/s eta 0:00:03\n",
-      "   ------------------------------ --------- 19.7/26.2 MB 3.8 MB/s eta 0:00:02\n",
-      "   ------------------------------- -------- 20.7/26.2 MB 3.8 MB/s eta 0:00:02\n",
-      "   --------------------------------- ------ 22.0/26.2 MB 3.9 MB/s eta 0:00:02\n",
-      "   ---------------------------------- ----- 22.3/26.2 MB 3.9 MB/s eta 0:00:02\n",
-      "   ---------------------------------- ----- 22.8/26.2 MB 3.8 MB/s eta 0:00:01\n",
-      "   ------------------------------------ --- 23.9/26.2 MB 3.8 MB/s eta 0:00:01\n",
-      "   ------------------------------------- -- 24.4/26.2 MB 3.8 MB/s eta 0:00:01\n",
-      "   ---------------------------------------  26.0/26.2 MB 3.9 MB/s eta 0:00:01\n",
-      "   ---------------------------------------  26.0/26.2 MB 3.9 MB/s eta 0:00:01\n",
-      "   ---------------------------------------- 26.2/26.2 MB 3.8 MB/s  0:00:06\n",
-      "Downloading pydeck-0.9.1-py2.py3-none-any.whl (6.9 MB)\n",
-      "   ---------------------------------------- 0.0/6.9 MB ? eta -:--:--\n",
-      "   - -------------------------------------- 0.3/6.9 MB ? eta -:--:--\n",
-      "   --------- ------------------------------ 1.6/6.9 MB 5.6 MB/s eta 0:00:01\n",
-      "   --------------- ------------------------ 2.6/6.9 MB 5.2 MB/s eta 0:00:01\n",
-      "   ------------------ --------------------- 3.1/6.9 MB 5.1 MB/s eta 0:00:01\n",
-      "   ---------------------- ----------------- 3.9/6.9 MB 4.5 MB/s eta 0:00:01\n",
-      "   ---------------------- ----------------- 3.9/6.9 MB 4.5 MB/s eta 0:00:01\n",
-      "   ------------------------------- -------- 5.5/6.9 MB 4.7 MB/s eta 0:00:01\n",
-      "   ---------------------------------------  6.8/6.9 MB 4.5 MB/s eta 0:00:01\n",
-      "   ---------------------------------------- 6.9/6.9 MB 4.3 MB/s  0:00:01\n",
-      "Downloading smmap-5.0.2-py3-none-any.whl (24 kB)\n",
-      "Downloading tenacity-9.1.2-py3-none-any.whl (28 kB)\n",
-      "Downloading toml-0.10.2-py2.py3-none-any.whl (16 kB)\n",
-      "Downloading watchdog-6.0.0-py3-none-win_amd64.whl (79 kB)\n",
-      "Downloading narwhals-2.11.0-py3-none-any.whl (423 kB)\n",
-      "Installing collected packages: watchdog, toml, tenacity, smmap, pyarrow, protobuf, narwhals, cachetools, pydeck, gitdb, gitpython, altair, streamlit\n",
-      "\n",
-      "   ----------------------------------------  0/13 [watchdog]\n",
-      "   ----------------------------------------  0/13 [watchdog]\n",
-      "   ----------------------------------------  0/13 [watchdog]\n",
-      "   ------ ---------------------------------  2/13 [tenacity]\n",
-      "   --------- ------------------------------  3/13 [smmap]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   ------------ ---------------------------  4/13 [pyarrow]\n",
-      "   --------------- ------------------------  5/13 [protobuf]\n",
-      "   --------------- ------------------------  5/13 [protobuf]\n",
-      "   --------------- ------------------------  5/13 [protobuf]\n",
-      "   --------------- ------------------------  5/13 [protobuf]\n",
-      "   --------------- ------------------------  5/13 [protobuf]\n",
-      "   --------------- ------------------------  5/13 [protobuf]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   ------------------ ---------------------  6/13 [narwhals]\n",
-      "   --------------------- ------------------  7/13 [cachetools]\n",
-      "   ------------------------ ---------------  8/13 [pydeck]\n",
-      "   ------------------------ ---------------  8/13 [pydeck]\n",
-      "   ------------------------ ---------------  8/13 [pydeck]\n",
-      "   --------------------------- ------------  9/13 [gitdb]\n",
-      "   --------------------------- ------------  9/13 [gitdb]\n",
-      "   ------------------------------ --------- 10/13 [gitpython]\n",
-      "   ------------------------------ --------- 10/13 [gitpython]\n",
-      "   ------------------------------ --------- 10/13 [gitpython]\n",
-      "   ------------------------------ --------- 10/13 [gitpython]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   --------------------------------- ------ 11/13 [altair]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ------------------------------------ --- 12/13 [streamlit]\n",
-      "   ---------------------------------------- 13/13 [streamlit]\n",
-      "\n",
-      "Successfully installed altair-5.5.0 cachetools-6.2.2 gitdb-4.0.12 gitpython-3.1.45 narwhals-2.11.0 protobuf-6.33.1 pyarrow-21.0.0 pydeck-0.9.1 smmap-5.0.2 streamlit-1.51.0 tenacity-9.1.2 toml-0.10.2 watchdog-6.0.0\n",
-      "Note: you may need to restart the kernel to use updated packages.\n"
-     ]
-    },
-    {
-     "name": "stderr",
-     "output_type": "stream",
-     "text": [
-      "  WARNING: The script watchmedo.exe is installed in 'C:\\Users\\verma\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\Scripts' which is not on PATH.\n",
-      "  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.\n",
-      "  WARNING: The script streamlit.exe is installed in 'C:\\Users\\verma\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\Scripts' which is not on PATH.\n",
-      "  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.\n"
-     ]
-    }
-   ],
-   "source": [
-    "pip install streamlit"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "41e82a1c-fd67-4cb8-a139-bcfba04a425d",
-   "metadata": {},
-   "outputs": [],
-   "source": []
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.12.10"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    results = []
+
+    if "shopping_results" not in data:
+        return []
+
+    for item in data["shopping_results"]:
+        store = item.get("source", "")
+        price = item.get("price", "")
+        link = item.get("link", "")
+        title = item.get("title", "")
+        rating = item.get("rating", 0)
+        reviews = item.get("reviews", 0)
+        thumbnail = item.get("thumbnail", "")
+
+        try:
+            price_value = float(price.replace("₹", "").replace(",", "").strip())
+        except:
+            continue
+
+        results.append({
+            "title": title,
+            "store": store,
+            "price": price_value,
+            "rating": rating,
+            "reviews": reviews,
+            "link": link,
+            "image": thumbnail
+        })
+
+    return results
+
+
+def rank_results(results):
+    if not results:
+        return []
+
+    df = pd.DataFrame(results)
+
+    df["score"] = (
+        (df["price"].max() - df["price"]) * 0.6 +    # lower price = better
+        (df["rating"].fillna(0)) * 0.3 +             # rating helpful
+        (df["reviews"].fillna(0)) * 0.1              # more reviews = trust
+    )
+
+    df = df.sort_values(by="score", ascending=False)
+    return df
+
+
+query = st.text_input("Enter product name:", placeholder="Example: iPhone 13, earphones, laptop stand")
+
+if query:
+    with st.spinner("Fetching prices... please wait ⏳"):
+        data = fetch_prices(query)
+
+    if not data:
+        st.error("No data found. Try another product.")
+    else:
+        ranked = rank_results(data)
+
+        st.subheader("🏆 Top 3 Best Deals")
+        top3 = ranked.head(3)
+
+        for _, row in top3.iterrows():
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if row["image"]:
+                    st.image(row["image"], width=120)
+            with col2:
+                st.markdown(f"### {row['title']}")
+                st.markdown(f"**Store:** {row['store']}")
+                st.markdown(f"**Price:** ₹{row['price']:,}")
+                st.markdown(f"[🔗 View Deal]({row['link']})")
+
+            st.markdown("---")
+
+        st.subheader("📦 All Results")
+        st.dataframe(ranked[["title", "store", "price", "rating", "reviews", "link"]])
