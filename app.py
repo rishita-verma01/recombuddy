@@ -45,20 +45,21 @@ def init_db(path=DB_PATH):
     )""")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        search_id INTEGER,
-        title TEXT,
-        store TEXT,
-        price REAL,
-        mrp REAL,
-        discount REAL,
-        rating REAL,
-        reviews INTEGER,
-        link TEXT,
-        image TEXT,
-        score REAL,
-        created_at TEXT
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    search_id TEXT,
+    source TEXT,
+    title TEXT,
+    price REAL,
+    mrp REAL,
+    discount REAL,
+    rating REAL,
+    reviews INTEGER,
+    link TEXT,
+    image TEXT,
+    score REAL,
+    timestamp TEXT
     )""")
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS purchases (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
