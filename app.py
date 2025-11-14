@@ -1,6 +1,15 @@
 # app.py
-# Streamlit India-only price compare (CSV-only storage, no links, no images)
+# Streamlit app — CSV-only storage (no links, no images), two encrypted CSVs,
+# price-history graphs via cumulative all_results.csv, embeddings optional.
+#
 # Add SERPAPI_KEY to Streamlit Secrets before running.
+#
+# Encryption: requires 'cryptography' package to encrypt files with password.
+# If cryptography is absent, files are provided unencrypted (warning shown).
+#
+# Required (recommended) in requirements.txt:
+# streamlit, pandas, requests, numpy, lightgbm (optional), cryptography (optional),
+# sentence-transformers & torch (optional for embeddings)
 
 import streamlit as st
 import requests
@@ -10,21 +19,24 @@ from datetime import datetime
 import json
 import numpy as np
 import uuid
+import base64
 import traceback
 
-# Optional LightGBM
+# Encryption imports (optional)
 try:
-    import lightgbm as lgb
-    LGB_AVAILABLE = True
-except:
-    LGB_AVAILABLE = False
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    CRYPTO_AVAILABLE = True
+except Exception:
+    CRYPTO_AVAILABLE = False
 
-# Optional sentence-transformers
+# Optional embedding libs
 EMBED_AVAILABLE = False
 EMBED_MODEL = None
 EMBED_DIM = None
 EMBED_THRESHOLD = 0.72
-
 try:
     from sentence_transformers import SentenceTransformer
     EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
@@ -32,21 +44,32 @@ try:
     EMBED_AVAILABLE = True
 except Exception:
     EMBED_AVAILABLE = False
-    EMBED_MODEL = None
 
-# ---------- CONFIG ----------
+# Optional LightGBM
+try:
+    import lightgbm as lgb
+    LGB_AVAILABLE = True
+except Exception:
+    LGB_AVAILABLE = False
+
+# ---------------- CONFIG ----------------
 SERPAPI_KEY = ""
 if hasattr(st, "secrets"):
     SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 if not SERPAPI_KEY:
     SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
-DB_CSV = "search_results.csv"   # main results (no links/images)
-PURCHASES_CSV = "purchases.csv" # purchases logged (store uid)
-ALERTS_CSV = "alerts.csv"       # alerts that triggered
+# filenames (local container)
+CURRENT_CSV = "current_search.csv"   # overwritten per-search (plaintext before encryption)
+ALL_RESULTS_CSV = "all_results.csv"  # cumulative (plaintext before encryption)
+PURCHASES_CSV = "purchases.csv"      # optional if you want purchase logging (kept for future)
 MIN_LABELS_TO_TRAIN = 10
 USD_TO_INR_API = "https://api.exchangerate-api.com/v4/latest/USD"
 
+# Password requested (fixed per your request)
+CSV_PASSWORD = "021202"
+
+# Indian stores list (abbreviated to the long list you supplied)
 INDIAN_STORES = [
     "Amazon", "Amazon.in", "Flipkart", "Croma", "Reliance Digital", "Tata Cliq", "Vijay Sales",
     "Poorvika", "Samsung India", "Mi India", "Boat Lifestyle", "OnePlus India", "Myntra",
@@ -104,12 +127,7 @@ INDIAN_STORES = [
     "Sleepwell India"
 ]
 
-# ---------- sanity check: SERPAPI key ----------
-if not SERPAPI_KEY:
-    st.error("SERPAPI_KEY is required in Streamlit Secrets or environment. Add it and refresh.")
-    st.stop()
-
-# ---------- helpers ----------
+# ---------------- helpers ----------------
 def get_usd_to_inr():
     try:
         r = requests.get(USD_TO_INR_API, timeout=8)
@@ -127,7 +145,6 @@ def clean_price(raw_price):
     s = s.replace(",", "").replace("₹", "").replace("Rs.", "").strip()
     for sep in ["/", "per", "month", "mo", "EMI", " emi", "₹"]:
         s = s.split(sep)[0]
-    # convert $ if indicated
     if "$" in raw_price or "USD" in raw_price or "US$" in raw_price:
         nums = "".join(ch for ch in s if (ch.isdigit() or ch == "."))
         if not nums:
@@ -137,8 +154,7 @@ def clean_price(raw_price):
     if filtered == "":
         return None
     price = float(filtered)
-    # filter obviously tiny prices
-    if price < 50:
+    if price < 50:  # filter out tiny accessory/EMI numbers
         return None
     return price
 
@@ -162,56 +178,76 @@ def compute_embedding(text):
     except Exception:
         return None
 
-def embedding_from_json(txt):
-    if not txt:
-        return None
-    try:
-        arr = json.loads(txt)
-        return np.array(arr, dtype=float)
-    except:
-        return None
+def title_token_match(a, b):
+    if not a or not b:
+        return False
+    a_tokens = set([t.lower() for t in a.split() if len(t) > 2])
+    b_tokens = set([t.lower() for t in b.split() if len(t) > 2])
+    if not a_tokens or not b_tokens:
+        return False
+    overlap = a_tokens.intersection(b_tokens)
+    return len(overlap) >= max(1, min(3, int(0.4 * min(len(a_tokens), len(b_tokens)))))
 
-def cosine_sim(a, b):
-    if a is None or b is None:
-        return -1.0
-    a = np.array(a, dtype=float)
-    b = np.array(b, dtype=float)
-    denom = (np.linalg.norm(a) * np.linalg.norm(b))
-    if denom == 0:
-        return -1.0
-    return float(np.dot(a, b) / denom)
+# ---------- encryption utilities (AES-CBC via cryptography if available) ----------
+def derive_key(password: str, salt: bytes, iterations: int = 200_000):
+    # returns 32-byte key
+    if not CRYPTO_AVAILABLE:
+        return None
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=iterations,
+        backend=default_backend()
+    )
+    return kdf.derive(password.encode("utf-8"))
+
+def encrypt_bytes(password: str, plaintext_bytes: bytes) -> bytes:
+    """
+    Returns: header (b'CSVENC1') + salt(16) + iv(16) + ciphertext
+    """
+    if not CRYPTO_AVAILABLE:
+        return None
+    salt = os.urandom(16)
+    key = derive_key(password, salt)
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    # PKCS7 padding
+    pad_len = 16 - (len(plaintext_bytes) % 16)
+    padded = plaintext_bytes + bytes([pad_len]) * pad_len
+    ct = encryptor.update(padded) + encryptor.finalize()
+    header = b"CSVENC1"
+    return header + salt + iv + ct
 
 # ---------- CSV helpers ----------
-def append_search_results(rows, search_query):
+def append_all_results(rows, search_query):
     """
-    rows: list of dicts {uid, title, store, price, rating, reviews, score, embedding, created_at}
+    rows: list of dicts with fields:
+      uid,title,store,price,rating,reviews,score,embedding,created_at,search_query
+    Appends to ALL_RESULTS_CSV (creates if missing).
     """
     df = pd.DataFrame(rows)
     df["search_query"] = search_query
-    file_exists = os.path.isfile(DB_CSV)
-    df.to_csv(DB_CSV, mode="a", header=not file_exists, index=False)
+    file_exists = os.path.exists(ALL_RESULTS_CSV)
+    df.to_csv(ALL_RESULTS_CSV, mode="a", header=not file_exists, index=False)
 
-def append_purchase(uid, bought_price):
-    t = datetime.utcnow().isoformat()
-    row = {"uid": uid, "bought_price": bought_price, "created_at": t}
-    file_exists = os.path.isfile(PURCHASES_CSV)
-    pd.DataFrame([row]).to_csv(PURCHASES_CSV, mode="a", header=not file_exists, index=False)
+def save_current_search_csv(rows):
+    """
+    rows: list of dicts — write current_search CSV (overwrite).
+    """
+    df = pd.DataFrame(rows)
+    df.to_csv(CURRENT_CSV, index=False)
 
-def append_alert(search_query, title, store, ttype, tval, price):
-    t = datetime.utcnow().isoformat()
-    row = {
-        "search_query": search_query,
-        "product_title": title,
-        "store": store,
-        "threshold_type": ttype,
-        "threshold_value": tval,
-        "triggered_price": price,
-        "triggered_at": t
-    }
-    file_exists = os.path.isfile(ALERTS_CSV)
-    pd.DataFrame([row]).to_csv(ALERTS_CSV, mode="a", header=not file_exists, index=False)
+def load_all_results_df():
+    if not os.path.exists(ALL_RESULTS_CSV):
+        return pd.DataFrame(columns=["uid","title","store","price","rating","reviews","score","embedding","created_at","search_query"])
+    try:
+        return pd.read_csv(ALL_RESULTS_CSV)
+    except Exception:
+        return pd.DataFrame(columns=["uid","title","store","price","rating","reviews","score","embedding","created_at","search_query"])
 
-# ---------- SerpAPI fetch ----------
+# ---------- SerpAPI fetch (no links, no images) ----------
 def fetch_serpapi(query, selected_stores=None, max_results=30):
     url = "https://serpapi.com/search.json"
     params = {
@@ -256,44 +292,30 @@ def fetch_serpapi(query, selected_stores=None, max_results=30):
         })
     return out
 
-# ---------- matching & ranking ----------
-def title_token_match(a, b):
-    if not a or not b:
-        return False
-    a_tokens = set([t.lower() for t in a.split() if len(t) > 2])
-    b_tokens = set([t.lower() for t in b.split() if len(t) > 2])
-    if not a_tokens or not b_tokens:
-        return False
-    overlap = a_tokens.intersection(b_tokens)
-    return len(overlap) >= max(1, min(3, int(0.4 * min(len(a_tokens), len(b_tokens)))))
-
-def fetch_price_history(title, store, current_embedding_json=None):
-    """
-    Reads search_results.csv and returns history dataframe (price, created_at) for matched titles.
-    Uses embedding similarity if embeddings exist; else token overlap.
-    """
-    if not os.path.exists(DB_CSV):
-        return pd.DataFrame(columns=["price", "created_at"])
-    try:
-        df_all = pd.read_csv(DB_CSV)
-    except Exception:
-        return pd.DataFrame(columns=["price", "created_at"])
+# ---------- matching & history from ALL_RESULTS_CSV ----------
+def fetch_price_history_for(uid, title, store, current_embedding_json=None):
+    df_all = load_all_results_df()
+    if df_all.empty:
+        return pd.DataFrame(columns=["price","created_at"])
     # filter by store
     df_store = df_all[df_all["store"].str.contains(store, case=False, na=False)]
     matches = []
+    cur_emb = None
     if current_embedding_json:
         try:
             cur_emb = np.array(json.loads(current_embedding_json), dtype=float)
         except Exception:
             cur_emb = None
-    else:
-        cur_emb = None
     for _, r in df_store.iterrows():
         matched = False
         if cur_emb is not None and r.get("embedding"):
             try:
                 past = np.array(json.loads(r["embedding"]), dtype=float)
-                if cosine_sim(cur_emb, past) >= EMBED_THRESHOLD:
+                if np.linalg.norm(past) != 0:
+                    sim = float(np.dot(cur_emb, past) / (np.linalg.norm(cur_emb) * np.linalg.norm(past)))
+                else:
+                    sim = -1.0
+                if sim >= EMBED_THRESHOLD:
                     matched = True
             except Exception:
                 matched = False
@@ -303,15 +325,19 @@ def fetch_price_history(title, store, current_embedding_json=None):
         if matched:
             matches.append((r.get("price"), r.get("created_at")))
     if not matches:
-        # fallback: return recent prices for this store
-        df_store["created_at"] = pd.to_datetime(df_store["created_at"])
-        df_store = df_store.sort_values("created_at")
-        return df_store[["price", "created_at"]]
-    dfm = pd.DataFrame(matches, columns=["price", "created_at"])
+        # fallback return recent prices for store
+        try:
+            df_store["created_at"] = pd.to_datetime(df_store["created_at"])
+            df_store = df_store.sort_values("created_at")
+            return df_store[["price","created_at"]]
+        except Exception:
+            return pd.DataFrame(columns=["price","created_at"])
+    dfm = pd.DataFrame(matches, columns=["price","created_at"])
     dfm["created_at"] = pd.to_datetime(dfm["created_at"])
     dfm = dfm.sort_values("created_at")
     return dfm
 
+# ---------- ranking ----------
 def heuristic_rank(rows):
     df = pd.DataFrame(rows)
     if df.empty:
@@ -323,62 +349,59 @@ def heuristic_rank(rows):
     df["score"] = df["price_norm"] * 0.7 + df["rating_norm"] * 0.2 + df["reviews_norm"] * 0.1
     return df
 
-def try_train_and_predict_from_csv(feature_df):
-    """
-    Tries to read search_results.csv + purchases.csv to form training data and train LightGBM.
-    It expects search_results.csv with uid, and purchases.csv with uid references.
-    """
+# Optional ML from CSVs (LightGBM)
+def try_train_and_predict_from_csv(rows_feature_df):
     if not LGB_AVAILABLE:
         return None
-    if not os.path.exists(DB_CSV) or not os.path.exists(PURCHASES_CSV):
+    if not os.path.exists(ALL_RESULTS_CSV) or not os.path.exists(PURCHASES_CSV):
         return None
     try:
-        df_results = pd.read_csv(DB_CSV)
+        df_all = pd.read_csv(ALL_RESULTS_CSV)
         df_p = pd.read_csv(PURCHASES_CSV)
     except Exception:
         return None
-    # mark bought flag by uid
-    df_results["bought"] = df_results["uid"].isin(df_p["uid"]).astype(int)
-    df_train = df_results[["price", "rating", "reviews", "bought"]].dropna()
+    df_all["bought"] = df_all["uid"].isin(df_p["uid"]).astype(int)
+    df_train = df_all[["price","rating","reviews","bought"]].dropna()
     if df_train.shape[0] < MIN_LABELS_TO_TRAIN:
         return None
-    X = df_train[["price", "rating", "reviews"]]
+    X = df_train[["price","rating","reviews"]]
     y = df_train["bought"]
     dtrain = lgb.Dataset(X, label=y)
     params = {"objective":"binary","metric":"binary_logloss","verbosity": -1}
     model = lgb.train(params, dtrain, num_boost_round=100)
-    X_new = feature_df[["price", "rating", "reviews"]].fillna(0)
+    X_new = rows_feature_df[["price","rating","reviews"]].fillna(0)
     preds = model.predict(X_new)
     return preds
 
-# ---------- UI ----------
-st.set_page_config(page_title="India Price Compare (CSV-only)", layout="wide")
-st.title("🇮🇳 Best Deal Finder — CSV-only, No Links, No Images")
+# ---------- Streamlit UI ----------
+st.set_page_config(page_title="India Price Compare — CSV-only (encrypted)", layout="wide")
+st.title("🇮🇳 Best Deal Finder — CSV-only, No Links/Images")
+
+if not SERPAPI_KEY:
+    st.error("SERPAPI_KEY required. Add to Streamlit Secrets or set SERPAPI_KEY env var.")
+    st.stop()
 
 with st.sidebar:
     st.header("Settings")
     selected_stores = st.multiselect("Filter stores (leave empty = all Indian stores)", options=INDIAN_STORES)
     st.markdown("---")
-    st.write("Embedding model: " + ("available" if EMBED_AVAILABLE else "not available (fallback to token-match)"))
+    st.write("Embeddings: " + ("available" if EMBED_AVAILABLE else "not available (token-match fallback)"))
     if EMBED_AVAILABLE:
-        st.write(f"Embed dim: {EMBED_DIM}  — threshold: {EMBED_THRESHOLD}")
+        st.write(f"Embedding dim: {EMBED_DIM}, threshold: {EMBED_THRESHOLD}")
     st.markdown("---")
-    st.write(f"USD→INR (live): {USD_INR:.2f}")
+    st.write(f"USD→INR: {USD_INR:.2f} (live)")
 
-if not SERPAPI_KEY:
-    st.stop()
-
-query = st.text_input("Enter product name (India only)", placeholder="e.g., iPhone 15, JBL Flip 6")
+query = st.text_input("Enter product name (India only)", placeholder="e.g. iPhone 15, JBL Flip 6")
 
 if query:
-    with st.spinner("Searching India stores (SerpAPI)…"):
+    with st.spinner("Fetching India results via SerpAPI..."):
         rows = fetch_serpapi(query, selected_stores)
     if not rows:
-        st.error("No valid India product results found. Try different query or broaden store filter.")
+        st.error("No valid India product results found.")
     else:
-        # rank (try ML first)
+        # attempt ML ranking if possible
         feature_df = pd.DataFrame(rows)[["price","rating","reviews"]]
-        preds = try_train_and_predict_from_csv(pd.DataFrame(rows)) if not feature_df.empty else None
+        preds = try_train_and_predict_from_csv(feature_df) if not feature_df.empty else None
         if preds is not None:
             for i, p in enumerate(preds):
                 rows[i]["score"] = float(p)
@@ -386,93 +409,84 @@ if query:
         else:
             df = heuristic_rank(rows).reset_index(drop=True)
 
-        # SAVE to CSV (append)
-        append_search_results(df.to_dict("records"), query)
-
-        # Save current results into session for mapping buy clicks to uid
+        # Save current search CSV (plaintext)
+        save_current_search_csv(df.to_dict("records"))
+        # Append to cumulative CSV
+        append_all_results(df.to_dict("records"), query)
+        # Keep in session for UI interactions
         st.session_state["last_results"] = df.to_dict("records")
 
-        # Show top 3 (no images, no links)
+        # Top 3 display and Bought button (writes purchases CSV)
         st.subheader("🏆 Top 3 Deals (India)")
-        for idx, r in df.head(3).iterrows():
+        for idx, row in df.head(3).iterrows():
             cols = st.columns([3,1])
             with cols[0]:
-                st.markdown(f"**{r['title']}**")
-                st.write(f"Store: **{r['store']}**  —  Price: **₹{int(r['price']):,}**")
-                if r.get("rating"):
-                    st.write(f"⭐ {r['rating']} ({r['reviews']} reviews)")
+                st.markdown(f"**{row['title']}**")
+                st.write(f"Store: **{row['store']}** — Price: **₹{int(row['price']):,}**")
+                if row.get("rating"):
+                    st.write(f"⭐ {row['rating']} ({row['reviews']} reviews)")
             with cols[1]:
-                uid = r["uid"]
+                uid = row["uid"]
                 if st.button(f"Bought — #{idx+1}", key=f"buy_top_{uid}"):
-                    append_purchase(uid, r["price"])
-                    st.success("Purchase recorded (saved to purchases.csv). This will be used for ML training later.")
+                    # record purchase to purchases CSV (keeps for future ML)
+                    if not os.path.exists(PURCHASES_CSV):
+                        pd.DataFrame([{"uid": uid, "bought_price": row["price"], "created_at": datetime.utcnow().isoformat()}]) \
+                          .to_csv(PURCHASES_CSV, mode="a", header=True, index=False)
+                    else:
+                        pd.DataFrame([{"uid": uid, "bought_price": row["price"], "created_at": datetime.utcnow().isoformat()}]) \
+                          .to_csv(PURCHASES_CSV, mode="a", header=False, index=False)
+                    st.success("Purchase recorded to purchases.csv")
 
         st.markdown("---")
         st.subheader("📦 All Results (ranked)")
         display_df = df[["uid","title","store","price","rating","reviews","score","created_at"]].copy()
         st.dataframe(display_df)
 
-        # price history UI (select a row to view history)
+        # Price history graph: choose a uid from displayed results
         st.markdown("---")
-        st.subheader("📈 Price History (matched from past searches)")
-        pick = st.selectbox("Pick a result to view its history (by uid)", options=list(display_df["uid"].values))
+        st.subheader("📈 Price History (from cumulative dataset)")
+        pick = st.selectbox("Select a result (uid) to view its history", options=list(display_df["uid"].values))
         selected_row = next((x for x in st.session_state["last_results"] if x["uid"] == pick), None)
         if selected_row:
-            hist = fetch_price_history(selected_row["title"], selected_row["store"], current_embedding_json=selected_row.get("embedding"))
-            if hist.empty:
-                st.info("No historical prices found.")
+            hist_df = fetch_price_history_for(pick, selected_row["title"], selected_row["store"], current_embedding_json=selected_row.get("embedding"))
+            if hist_df.empty:
+                st.info("No historical rows matched for this product.")
             else:
-                st.line_chart(data=hist.set_index("created_at")["price"])
-                st.write(f"Historical min: ₹{int(hist['price'].min())}, mean: ₹{int(hist['price'].mean())}")
+                st.line_chart(data=hist_df.set_index("created_at")["price"])
+                st.write(f"Historical min: ₹{int(hist_df['price'].min())}, mean: ₹{int(hist_df['price'].mean())}")
 
-        # Alerts: set a threshold for any given result
+        # ---------- Offer downloads (encrypted if cryptography available) ----------
         st.markdown("---")
-        st.subheader("🔔 Price Alert (set for any of the displayed results)")
-        alert_uid = st.selectbox("Choose product (uid) to watch", options=list(display_df["uid"].values))
-        alert_row = next((x for x in st.session_state["last_results"] if x["uid"] == alert_uid), None)
-        if alert_row:
-            alert_type = st.radio("Alert type", ("percent_drop_from_history_min", "absolute_price_in_INR"))
-            if alert_type == "percent_drop_from_history_min":
-                perc = st.number_input("Trigger when price drops by X% below historical min", min_value=1.0, max_value=100.0, value=20.0)
-                if st.button("Set percent alert"):
-                    hist = fetch_price_history(alert_row["title"], alert_row["store"], current_embedding_json=alert_row.get("embedding"))
-                    hist_min = hist["price"].min() if (not hist.empty) else alert_row["price"]
-                    threshold_price = hist_min * (1 - perc/100.0)
-                    if alert_row["price"] <= threshold_price:
-                        append_alert(query, alert_row["title"], alert_row["store"], "percent", perc, alert_row["price"])
-                        st.success("Alert triggered immediately and logged to alerts.csv.")
-                    else:
-                        # store "planned" alert as csv entry with triggered_price empty? We'll just inform the user.
-                        st.info(f"Alert set: will trigger when price <= ₹{int(threshold_price)} (app checks at search-time).")
+        st.subheader("⬇️ Download CSVs (password protected)")
+
+        # CURRENT SEARCH CSV (encrypt or not)
+        try:
+            with open(CURRENT_CSV, "rb") as f:
+                current_bytes = f.read()
+        except Exception:
+            current_bytes = None
+
+        if current_bytes:
+            if CRYPTO_AVAILABLE:
+                enc_current = encrypt_bytes(CSV_PASSWORD, current_bytes)
+                st.download_button("Download current_search.csv (encrypted)", enc_current, file_name="current_search.csv.enc")
             else:
-                absolute = st.number_input("Trigger when price ≤ ₹", min_value=1, value=int(alert_row["price"]))
-                if st.button("Set absolute alert"):
-                    if alert_row["price"] <= absolute:
-                        append_alert(query, alert_row["title"], alert_row["store"], "absolute", absolute, alert_row["price"])
-                        st.success("Alert triggered immediately and logged to alerts.csv.")
-                    else:
-                        st.info(f"Alert registered: will trigger when price ≤ ₹{int(absolute)} (app checks at search-time).")
+                st.warning("cryptography not installed — downloading current_search.csv unencrypted.")
+                st.download_button("Download current_search.csv (unencrypted)", current_bytes, file_name="current_search.csv")
 
-# ---------- Admin: download CSVs ----------
-st.markdown("---")
-st.header("⚙️ Admin — CSV downloads")
-if st.button("Download search_results.csv"):
-    if os.path.exists(DB_CSV):
-        with open(DB_CSV, "rb") as f:
-            st.download_button("Download search_results.csv", f.read(), file_name=DB_CSV)
-    else:
-        st.info("No search_results.csv file yet.")
+        # ALL_RESULTS CSV (read and encrypt)
+        try:
+            with open(ALL_RESULTS_CSV, "rb") as f:
+                all_bytes = f.read()
+        except Exception:
+            all_bytes = None
 
-if st.button("Download purchases.csv"):
-    if os.path.exists(PURCHASES_CSV):
-        with open(PURCHASES_CSV, "rb") as f:
-            st.download_button("Download purchases.csv", f.read(), file_name=PURCHASES_CSV)
-    else:
-        st.info("No purchases.csv file yet.")
+        if all_bytes:
+            if CRYPTO_AVAILABLE:
+                enc_all = encrypt_bytes(CSV_PASSWORD, all_bytes)
+                st.download_button("Download all_results.csv (encrypted)", enc_all, file_name="all_results.csv.enc")
+            else:
+                st.warning("cryptography not installed — downloading all_results.csv unencrypted.")
+                st.download_button("Download all_results.csv (unencrypted)", all_bytes, file_name="all_results.csv")
 
-if st.button("Download alerts.csv"):
-    if os.path.exists(ALERTS_CSV):
-        with open(ALERTS_CSV, "rb") as f:
-            st.download_button("Download alerts.csv", f.read(), file_name=ALERTS_CSV)
-    else:
-        st.info("No alerts.csv file yet.")
+# ---------- end of app ----------
