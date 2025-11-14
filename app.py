@@ -1,9 +1,9 @@
 # app.py
-# Streamlit Price Compare (SerpAPI) + robust price parsing + INR conversion + CSV save + SQLite + optional LightGBM
-# Deploy on share.streamlit.io (Streamlit Cloud)
+# Streamlit Price Compare (SerpAPI) + currency handling + CSV + SQLite + optional LightGBM
+# Deploy on Streamlit Cloud. Add SERPAPI_KEY to Streamlit Secrets.
 #
 # Requirements: streamlit, pandas, requests, lightgbm (optional)
-# Add your SERPAPI_KEY to Streamlit Secrets as before.
+# Save this file as app.py
 
 import streamlit as st
 import requests
@@ -14,7 +14,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 import re
-import math
 
 # Optional LightGBM
 try:
@@ -25,15 +24,17 @@ except Exception:
 
 # ---------- CONFIG ----------
 DB_PATH = "price_compare.db"
+CSV_PATH = "results_log.csv"
 MIN_LABELS_TO_TRAIN = 10
-CSV_FOLDER = "csv_results"
-os.makedirs(CSV_FOLDER, exist_ok=True)
-st.set_page_config(page_title="Best Deal Finder (SerpAPI) — INR-aware", layout="wide")
+MAX_SERPAPI_RESULTS = 30
+PLAUSIBILITY_MULTIPLIER = 0.3   # results with INR price < median*multiplier will be flagged/removed
+EXCHANGE_API = "https://api.exchangerate.host/latest?base=USD&symbols=INR"
+st.set_page_config(page_title="Best Deal Finder (SerpAPI) — INR", layout="wide")
 # ----------------------------
 
-st.title("🛒 Best Deal Finder — SerpAPI + INR Conversion + CSV + Buttons")
+st.title("🛒 Best Deal Finder — SerpAPI + INR conversion + CSV logging")
 
-# Secrets
+# Load secrets (Streamlit Cloud)
 SERPAPI_KEY = ""
 if hasattr(st, "secrets"):
     SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
@@ -41,10 +42,70 @@ if not SERPAPI_KEY:
     SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
 if not SERPAPI_KEY:
-    st.error("SERPAPI_KEY not set. Add it to Streamlit Secrets or as an env var.")
+    st.error("SERPAPI_KEY not found. Add it in Streamlit Secrets or set SERPAPI_KEY as an env var.")
     st.stop()
 
-# ---------- DB ----------
+# ---------- Utilities ----------
+def fetch_usd_inr_rate():
+    """Fetch live USD -> INR exchange rate from exchangerate.host (no key)."""
+    try:
+        r = requests.get(EXCHANGE_API, timeout=8)
+        data = r.json()
+        rate = data.get("rates", {}).get("INR")
+        if rate:
+            return float(rate)
+    except Exception:
+        pass
+    # fallback hard-coded reasonable default (keep in case API fails)
+    return 88.7
+
+def clean_price_string(p):
+    """Take raw price string and return (value, currency) or (None, None)."""
+    if p is None:
+        return None, None
+    s = str(p).strip()
+    # Common currency symbols mapping
+    s = s.replace('\u200b','')  # remove zero-width
+    # If it contains '₹' or 'Rs' or 'INR'
+    if "₹" in s or "rs" in s.lower() or "inr" in s.lower():
+        # remove non-digit except dot and comma
+        num = re.sub(r"[^\d.,]", "", s)
+        num = num.replace(",", "")
+        try:
+            return float(num), "INR"
+        except:
+            return None, None
+    # USD/dollar
+    if "$" in s or "usd" in s.lower():
+        num = re.sub(r"[^\d.,]", "", s)
+        num = num.replace(",", "")
+        try:
+            return float(num), "USD"
+        except:
+            return None, None
+    # If it's numeric without currency, try to heuristically decide:
+    num = re.sub(r"[^\d.,]", "", s).replace(",", "")
+    if num == "":
+        return None, None
+    try:
+        # interpret as INR if large (> 1000) else could be USD; return raw and let conversion decide
+        val = float(num)
+        currency_guess = "INR" if val > 1000 else "UNKNOWN"
+        return val, currency_guess
+    except:
+        return None, None
+
+def to_inr(value, currency, usd_inr_rate):
+    if value is None:
+        return None
+    if currency == "INR":
+        return float(value)
+    if currency == "USD":
+        return float(value) * float(usd_inr_rate)
+    # UNKNOWN: assume INR (best-effort)
+    return float(value)
+
+# ---------- DB & CSV helpers ----------
 def init_db(path=DB_PATH):
     conn = sqlite3.connect(path, check_same_thread=False)
     cur = conn.cursor()
@@ -60,15 +121,14 @@ def init_db(path=DB_PATH):
         search_id INTEGER,
         title TEXT,
         store TEXT,
-        price_original TEXT,
-        currency TEXT,
+        raw_price TEXT,
+        parsed_currency TEXT,
         price_in_inr REAL,
         rating REAL,
         reviews INTEGER,
         link TEXT,
         image TEXT,
         score REAL,
-        flags TEXT,
         created_at TEXT
     )""")
     cur.execute("""
@@ -81,6 +141,11 @@ def init_db(path=DB_PATH):
     )""")
     conn.commit()
     return conn
+
+def append_csv(rows, csv_path=CSV_PATH):
+    df = pd.DataFrame(rows)
+    is_new = not Path(csv_path).exists()
+    df.to_csv(csv_path, mode="a", index=False, header=is_new)
 
 db_conn = init_db(DB_PATH)
 
@@ -97,11 +162,11 @@ def log_results(search_id, results):
     for r in results:
         cur.execute("""
             INSERT INTO results
-            (search_id, title, store, price_original, currency, price_in_inr, rating, reviews, link, image, score, flags, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (search_id, r.get("title"), r.get("store"), r.get("price_raw"), r.get("currency"),
+            (search_id, title, store, raw_price, parsed_currency, price_in_inr, rating, reviews, link, image, score, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (search_id, r.get("title"), r.get("store"), r.get("raw_price"), r.get("parsed_currency"),
               r.get("price_in_inr"), r.get("rating") or 0, r.get("reviews") or 0,
-              r.get("link"), r.get("image"), r.get("score") or 0, r.get("flags") or "", ts))
+              r.get("link"), r.get("image"), r.get("score") or 0, ts))
     db_conn.commit()
 
 def log_purchase(result_row_id, search_id, bought_price):
@@ -111,105 +176,8 @@ def log_purchase(result_row_id, search_id, bought_price):
                 (result_row_id, search_id, bought_price, ts))
     db_conn.commit()
 
-# ---------- Utility: fetch live USD->INR rate (free) ----------
-def fetch_usd_to_inr():
-    """
-    Uses exchangerate.host free API to get latest USD->INR rate.
-    Falls back to a conservative constant if API fails.
-    """
-    try:
-        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=INR", timeout=6)
-        j = r.json()
-        rate = float(j.get("rates", {}).get("INR"))
-        if rate and rate > 0:
-            return rate
-    except Exception:
-        pass
-    # fallback safe default (will be updated if you refresh)
-    return 88.7
-
-# ---------- SerpAPI fetch & robust price parsing ----------
-CURRENCY_SYMBOLS = {
-    "₹": "INR", "rs": "INR", "rs.": "INR", "rs": "INR",
-    "inr": "INR", "usd": "USD", "$": "USD", "us$": "USD", "€": "EUR",
-    "aud$": "AUD", "sgd": "SGD"
-}
-
-def detect_currency_and_amount(price_str):
-    """
-    Try to detect currency and numeric amount from various SerpAPI price strings.
-    Returns (amount_float, currency_code, raw_string)
-    """
-    if price_str is None:
-        return None, None, ""
-    s = str(price_str).strip()
-    # normalize spaces
-    s_norm = re.sub(r"\s+", " ", s.lower())
-    # detect common currency symbols first
-    for sym, code in CURRENCY_SYMBOLS.items():
-        if sym in s_norm:
-            # remove non numeric except . and ,
-            num = re.sub(r"[^\d.,]", "", s_norm)
-            # replace comma thousands, keep decimal dot
-            num = num.replace(",", "")
-            try:
-                val = float(num)
-                return val, code, s
-            except Exception:
-                pass
-    # try to find standalone $ or ₹
-    m = re.search(r"([\$\₹])\s*([0-9\.,]+)", s)
-    if m:
-        sym = m.group(1)
-        amt = m.group(2).replace(",", "")
-        code = "USD" if sym == "$" else "INR"
-        try:
-            return float(amt), code, s
-        except:
-            pass
-    # fallback: extract digits
-    m2 = re.search(r"([0-9\.,]{2,})", s)
-    if m2:
-        num = m2.group(1).replace(",", "")
-        try:
-            return float(num), None, s
-        except:
-            pass
-    return None, None, s
-
-def normalize_price_to_inr(price_raw):
-    """
-    Input: raw price string or numeric
-    Output: (price_in_inr: float, currency_code: str, price_original_str)
-    """
-    # If already numeric and we assume INR (common)
-    if price_raw is None:
-        return None, None, ""
-    # if price_raw is numeric
-    if isinstance(price_raw, (int, float)):
-        return float(price_raw), "INR", str(price_raw)
-    amt, code, raw = detect_currency_and_amount(price_raw)
-    if amt is None:
-        return None, None, raw
-    # If USD convert
-    if code == "USD":
-        rate = fetch_usd_to_inr()
-        return round(amt * rate, 2), "USD", raw
-    # If INR or unknown treat as INR
-    if code == "INR" or code is None:
-        return round(amt, 2), "INR", raw
-    # other currencies: convert via exchangerate.host
-    try:
-        r = requests.get(f"https://api.exchangerate.host/convert?from={code}&to=INR&amount={amt}", timeout=6)
-        jr = r.json()
-        res = float(jr.get("result"))
-        return round(res, 2), code, raw
-    except Exception:
-        # fallback: return numeric as-is
-        return round(amt, 2), code, raw
-
-# ---------- Fetch from SerpAPI ----------
-def fetch_serpapi(query, serpapi_key, max_results=30):
+# ---------- SerpAPI fetch + robust parsing ----------
+def fetch_serpapi(query, serpapi_key, max_results=MAX_SERPAPI_RESULTS, usd_inr_rate=88.7):
     url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_shopping",
@@ -217,23 +185,28 @@ def fetch_serpapi(query, serpapi_key, max_results=30):
         "api_key": serpapi_key,
         "num": max_results
     }
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        data = r.json()
-    except Exception as e:
-        st.error(f"SerpAPI request failed: {e}")
-        return []
+    r = requests.get(url, params=params, timeout=15)
+    data = r.json()
     out = []
     for item in data.get("shopping_results", []):
-        # SerpAPI sometimes has price in different keys; prefer 'price' but keep raw
-        price_raw = item.get("price") or item.get("extracted_price") or item.get("product_price") or item.get("offers", {}).get("price", "")
-        price_in_inr, currency_code, price_orig = normalize_price_to_inr(price_raw)
+        raw_price = item.get("price") or item.get("inventoried_price") or ""
+        # Some results have price as dict or number; convert to string
+        raw_price_str = str(raw_price)
+        value, currency = clean_price_string(raw_price_str)
+        price_in_inr = to_inr(value, currency, usd_inr_rate) if value is not None else None
+
+        # Extra guard: sometimes SerpAPI returns weird low strings — also try "raw" field
+        if price_in_inr is None:
+            # try check 'extracted_price' etc.
+            # fallback skip this item
+            continue
+
         out.append({
-            "title": item.get("title"),
+            "title": item.get("title") or item.get("product_title") or "",
             "store": item.get("source") or item.get("store") or "",
-            "price_raw": price_orig,
-            "currency": currency_code,
-            "price_in_inr": price_in_inr,
+            "raw_price": raw_price_str,
+            "parsed_currency": currency,
+            "price_in_inr": float(price_in_inr),
             "rating": float(item.get("rating") or 0),
             "reviews": int(item.get("reviews") or 0),
             "link": item.get("link") or "",
@@ -241,15 +214,11 @@ def fetch_serpapi(query, serpapi_key, max_results=30):
         })
     return out
 
-# ---------- Ranking ----------
-def heuristic_rank(df):
+# ---------- Ranking & plausibility ----------
+def heuristic_rank_df(df):
     if df.empty:
         return df
     df = df.copy()
-    # if price_in_inr missing, drop those rows for ranking
-    df = df[df["price_in_inr"].notnull()].copy()
-    if df.empty:
-        return df
     df["rating_norm"] = df["rating"].fillna(0) / 5.0
     df["reviews_norm"] = df["reviews"].fillna(0) / (df["reviews"].max() + 1e-9)
     max_price = df["price_in_inr"].max() if df["price_in_inr"].notnull().any() else 1.0
@@ -273,141 +242,109 @@ def train_lgb_and_score(feature_df, db_conn_local):
     lgb_train = lgb.Dataset(X, label=y)
     params = {"objective":"binary", "metric":"binary_logloss", "verbosity": -1}
     model = lgb.train(params, lgb_train, num_boost_round=100)
-    X_new = feature_df[["price_in_inr", "rating", "reviews"]].rename(columns={"price_in_inr":"price"})
-    X_new = X_new.fillna(0)
-    preds = model.predict(X_new)
+    X_new = feature_df[["price_in_inr", "rating", "reviews"]].fillna(0)
+    X_new = X_new.rename(columns={"price_in_inr":"price"})
+    preds = model.predict(X_new[["price","rating","reviews"]])
     return preds, model
 
-def get_ranked_results(results):
+def get_ranked_results(results, usd_inr_rate):
     df = pd.DataFrame(results)
     if df.empty:
-        return df
-    # remove rows with no price converted
-    df = df[df["price_in_inr"].notnull()].copy()
-    if df.empty:
-        return df
-    ml = train_lgb_and_score(df, db_conn)
+        return df, []
+    # Plausibility filter: compute median and drop extremely low-price items
+    median_price = df["price_in_inr"].median()
+    plausible_threshold = (median_price * PLAUSIBILITY_MULTIPLIER) if median_price and median_price>0 else 0
+    # Partition results into plausible and suspect
+    plausible = df[df["price_in_inr"] >= plausible_threshold].copy()
+    suspect = df[df["price_in_inr"] < plausible_threshold].copy()
+    # Train ML if possible
+    ml = None
+    try:
+        ml = train_lgb_and_score(plausible, db_conn)
+    except Exception:
+        ml = None
     if ml:
         preds, model = ml
-        df["score"] = preds
-        df = df.sort_values(by="score", ascending=False).reset_index(drop=True)
-        return df
-    df = heuristic_rank(df)
-    df = df.sort_values(by="score", ascending=False).reset_index(drop=True)
-    return df
-
-# ---------- Heuristic flag for improbable prices ----------
-PHONE_KEYWORDS = ["iphone", "galaxy", "pixel", "oneplus", "redmi", "moto", "microsoft surface", "ipad", "ipad mini", "ipad pro", "phone", "smartphone"]
-
-def flag_improbable(row):
-    flags = []
-    title = (row.get("title") or "").lower()
-    price = row.get("price_in_inr")
-    if price is None or math.isnan(price):
-        flags.append("price-missing")
-        return ";".join(flags)
-    # if title contains phone brand and price less than threshold -> likely accessory
-    for k in PHONE_KEYWORDS:
-        if k in title:
-            if price < 5000:  # phone priced under 5k likely accessory or wrong
-                flags.append("likely-accessory-or-wrong-price")
-            break
-    # if price very small (<50 INR) -> suspicious
-    if price < 50:
-        flags.append("suspiciously-low-price")
-    return ";".join(flags)
-
-# ---------- CSV writer ----------
-def save_results_to_csv(search_id, query, ranked_df):
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"{CSV_FOLDER}/results_{ts}.csv"
-    out_rows = []
-    for _, r in ranked_df.iterrows():
-        out_rows.append({
-            "search_id": search_id,
-            "query": query,
-            "timestamp": datetime.utcnow().isoformat(),
-            "title": r.get("title"),
-            "store": r.get("store"),
-            "price_original": r.get("price_raw"),
-            "currency": r.get("currency"),
-            "price_in_inr": r.get("price_in_inr"),
-            "rating": r.get("rating"),
-            "reviews": r.get("reviews"),
-            "link": r.get("link"),
-            "image": r.get("image"),
-            "score": r.get("score"),
-            "flags": r.get("flags")
-        })
-    df_out = pd.DataFrame(out_rows)
-    # append if file exists else write
-    df_out.to_csv(filename, index=False)
-    return filename
+        plausible["score"] = preds
+        plausible = plausible.sort_values(by="score", ascending=False).reset_index(drop=True)
+    else:
+        plausible = heuristic_rank_df(plausible)
+        plausible = plausible.sort_values(by="score", ascending=False).reset_index(drop=True)
+    # For suspect items, assign low score and keep them at the end (so user can still view)
+    if not suspect.empty:
+        suspect = suspect.copy()
+        suspect["score"] = -1.0
+        suspect = suspect.reset_index(drop=True)
+    combined = pd.concat([plausible, suspect], ignore_index=True)
+    return combined, suspect.to_dict('records')
 
 # ---------- UI ----------
-st.markdown("Type a product name and press Enter. Results come from SerpAPI (Google Shopping). Prices in other currencies will be converted to INR automatically. Product links are 'Open' buttons.")
+st.markdown("Type product name. We fetch Google Shopping results (SerpAPI), normalize currencies to INR, filter suspiciously cheap results, and save everything to CSV + SQLite. Buttons open product pages.")
 
-query = st.text_input("Enter product name (e.g. iPhone 13, Bluetooth speaker)")
-
-# Show current USD->INR rate fetched live (helpful for transparency)
-with st.spinner("Fetching live USD → INR rate..."):
-    usd2inr = fetch_usd_to_inr()
-st.caption(f"Live USD → INR used for conversion: 1 USD = {usd2inr:.4f} INR. (Live source: exchangerate.host; example market rates: Wise/XE show ~88.7 INR).")
+query = st.text_input("Enter product name (e.g. iPhone 16, JBL earphones)")
 
 if query:
+    with st.spinner("Fetching live USD→INR rate..."):
+        usd_inr_rate = fetch_usd_inr_rate()
+    st.write(f"Using USD → INR rate: **{usd_inr_rate:.4f}** (fetched live).")
     with st.spinner("Fetching prices from SerpAPI..."):
-        serp_results = fetch_serpapi(query, SERPAPI_KEY)
+        serp_results = fetch_serpapi(query, SERPAPI_KEY, max_results=MAX_SERPAPI_RESULTS, usd_inr_rate=usd_inr_rate)
 
-    # dedupe by title+store lightly
+    # dedupe by title+store (light)
     seen = set()
     unique = []
     for r in serp_results:
-        key = (str(r.get("title",""))[:120].strip().lower(), str(r.get("store","")).strip().lower(), str(r.get("price_raw","")).strip())
+        key = (str(r.get("title",""))[:120].strip().lower(), str(r.get("store","")).strip().lower(), int(r.get("price_in_inr") or 0))
         if key in seen:
             continue
         seen.add(key)
         unique.append(r)
 
-    # Add flags
-    for r in unique:
-        r["flags"] = flag_improbable(r)
+    ranked_df, suspect_list = get_ranked_results(unique, usd_inr_rate)
 
-    ranked_df = get_ranked_results(unique)
-
-    # Fill missing scores with 0 if needed
-    if "score" not in ranked_df.columns:
-        ranked_df["score"] = 0.0
-
-    # Log search + results
+    # Log search + results & append CSV
     search_id = log_search(query)
-    log_results(search_id, ranked_df.to_dict('records'))
+    logged_rows = []
+    for _, row in ranked_df.iterrows():
+        rec = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "search_id": search_id,
+            "title": row.get("title"),
+            "store": row.get("store"),
+            "raw_price": row.get("raw_price"),
+            "parsed_currency": row.get("parsed_currency"),
+            "price_in_inr": float(row.get("price_in_inr") or 0),
+            "rating": float(row.get("rating") or 0),
+            "reviews": int(row.get("reviews") or 0),
+            "link": row.get("link") or "",
+            "image": row.get("image") or "",
+            "score": float(row.get("score") or 0)
+        }
+        logged_rows.append(rec)
+    # CSV append
+    if logged_rows:
+        append_csv(logged_rows, CSV_PATH)
+    # DB log
+    log_results(search_id, logged_rows)
 
-    # Save CSV and offer download
-    csv_file = save_results_to_csv(search_id, query, ranked_df)
-    with open(csv_file, "rb") as f:
-        st.download_button("📥 Download CSV for this search", f, file_name=os.path.basename(csv_file))
-
-    st.subheader("🏆 Top 3 Deals")
-    top3 = ranked_df.head(3)
+    st.subheader("🏆 Top 3 (plausible) Deals")
+    top3 = ranked_df[ranked_df["score"]>=0].head(3)  # only plausible
     for idx, row in top3.reset_index(drop=True).iterrows():
-        cols = st.columns([1,5,2])
+        cols = st.columns([1,4,1])
         with cols[0]:
             if row.get("image"):
                 st.image(row.get("image"), width=120)
         with cols[1]:
-            st.markdown(f"### {row.get('title')}")
-            st.write(f"**Store:** {row.get('store')}  •  **Price (INR):** ₹{row.get('price_in_inr'):,}" if row.get("price_in_inr") is not None else "Price: N/A")
-            st.write(f"**Original:** {row.get('price_raw')} ({row.get('currency') or 'unknown'})")
+            st.markdown(f"**{row.get('title')}**")
+            st.write(f"Store: **{row.get('store')}** — Price: **₹{int(row.get('price_in_inr')):,}**")
+            st.write(f"Raw price: `{row.get('raw_price')}` — Parsed currency: `{row.get('parsed_currency')}`")
             if row.get("rating"):
-                st.write(f"⭐ {row.get('rating')} ({row.get('reviews')} reviews)")
-            if row.get("flags"):
-                st.warning(f"Flag: {row.get('flags')}")
+                st.write(f"Rating: {row.get('rating')} ⭐ ({row.get('reviews')} reviews)")
         with cols[2]:
-            # Option A: button-style open link (HTML button)
-            link = row.get("link") or "#"
-            if link and link != "#":
-                st.markdown(f"""<a href="{link}" target="_blank" rel="noopener noreferrer"><button style="padding:10px 14px;border-radius:6px;background-color:#1f77b4;color:white;border:none;">Open</button></a>""", unsafe_allow_html=True)
-            # a buy button to label purchases for ML
+            # Option A: Button that opens link in new tab
+            url = row.get("link") or "#"
+            btn_html = f"""<a href="{url}" target="_blank" rel="noopener noreferrer"><button style="padding:8px 12px;border-radius:6px;">Open Product</button></a>"""
+            st.markdown(btn_html, unsafe_allow_html=True)
             if st.button(f"Bought — #{idx+1}", key=f"buy_top_{idx}_{time.time()}"):
                 cur = db_conn.cursor()
                 cur.execute("SELECT id FROM results WHERE search_id = ? AND title = ? AND price_in_inr = ? ORDER BY id DESC LIMIT 1",
@@ -415,21 +352,22 @@ if query:
                 res = cur.fetchone()
                 if res:
                     log_purchase(res[0], search_id, float(row.get("price_in_inr") or 0))
-                    st.success("Purchase recorded — used for future ML training.")
+                    st.success("Purchase recorded — used for future training.")
                 else:
                     st.error("Could not record purchase (not found).")
 
     st.markdown("---")
-    st.subheader("📦 All Results (ranked)")
-    display_df = ranked_df[["title","store","price_raw","currency","price_in_inr","rating","reviews","score","flags","link"]].reset_index(drop=True)
-    st.dataframe(display_df)
+    st.subheader("📦 All Results (ranked; suspect items shown at bottom)")
+    display_df = ranked_df[["title","store","price_in_inr","raw_price","parsed_currency","rating","reviews","score","link"]].reset_index(drop=True)
+    st.dataframe(display_df.rename(columns={"price_in_inr":"price_in_inr (₹)"}))
 
     st.markdown("---")
-    st.info("Use the 'Open' button to visit the product page. Mark Bought to create labels for model training. Low or $ prices are converted to INR automatically.")
+    if suspect_list:
+        st.warning(f"{len(suspect_list)} suspiciously low-price item(s) were detected and pushed to the bottom. You can still view them in 'All Results'.")
 
-# ---------- Admin / Train ----------
+# ---------- Admin / Train & Download ----------
 st.markdown("---")
-st.header("⚙️ Admin & Model")
+st.header("⚙️ Admin & Data")
 
 cur = db_conn.cursor()
 cur.execute("SELECT COUNT(*) FROM searches")
@@ -464,7 +402,8 @@ if st.button("Force-train LightGBM (if enough labels)"):
             model.save_model("lgb_model.txt")
             st.success("LightGBM model trained and saved as lgb_model.txt")
 
-if st.button("Download full SQLite DB"):
+# Download DB or CSV
+if st.button("Download SQLite DB"):
     try:
         with open(DB_PATH, "rb") as f:
             data = f.read()
@@ -472,4 +411,9 @@ if st.button("Download full SQLite DB"):
     except Exception as e:
         st.error(f"Cannot read DB: {e}")
 
-st.markdown("Notes: The app converts USD or other currencies into INR via exchangerate.host. It flags improbable prices (e.g., phones < ₹5,000) so you can inspect results. CSV files are saved per-search in the app folder — download them immediately to keep history (Streamlit Cloud filesystem is ephemeral).")
+if Path(CSV_PATH).exists():
+    with open(CSV_PATH, "rb") as f:
+        csv_data = f.read()
+    st.download_button("Download CSV Log", csv_data, file_name=Path(CSV_PATH).name)
+
+st.markdown("Notes: The app converts USD prices to INR at runtime using exchangerate.host and filters out suspiciously low prices (below median × multiplier). Adjust `PLAUSIBILITY_MULTIPLIER` near top if you want stricter/looser filtering.")
