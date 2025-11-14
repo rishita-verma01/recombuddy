@@ -4,6 +4,7 @@ import pandas as pd
 import sqlite3
 import os
 import time
+import re
 from datetime import datetime
 from pathlib import Path
 import html
@@ -17,21 +18,24 @@ except Exception:
 
 # ---------- CONFIG ----------
 DB_PATH = "price_compare.db"
+CSV_PATH = "results_log.csv"
 MIN_LABELS_TO_TRAIN = 10
-st.set_page_config(page_title="Best Deal Finder (SerpAPI) — Links", layout="wide")
+MAX_SERP_RESULTS = 40
+st.set_page_config(page_title="Best Deal Finder — Improved", layout="wide")
 # ----------------------------
 
-st.title("🛒 Best Deal Finder — Product Links Included (Button style)")
+st.title("🛒 Best Deal Finder — Improved (Links + CSV + Better Filters)")
 
-# Load SerpAPI key: prefer Streamlit secrets, then env var, otherwise placeholder
+# Load secrets (Streamlit Cloud)
 SERPAPI_KEY = ""
 if hasattr(st, "secrets"):
     SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 if not SERPAPI_KEY:
-    SERPAPI_KEY = os.getenv("SERPAPI_KEY", "") or "YOUR_SERPAPI_KEY"  # placeholder key
+    SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
-if SERPAPI_KEY == "YOUR_SERPAPI_KEY":
-    st.warning("Using placeholder SerpAPI key. Add your real key in Streamlit Secrets (SERPAPI_KEY) for production.")
+if not SERPAPI_KEY:
+    st.error("SERPAPI_KEY not found. Add it in Streamlit Secrets or set SERPAPI_KEY as an env var.")
+    st.stop()
 
 # ---------- DB helpers ----------
 def init_db(path=DB_PATH):
@@ -45,21 +49,18 @@ def init_db(path=DB_PATH):
     )""")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    search_id TEXT,
-    source TEXT,
-    title TEXT,
-    price REAL,
-    mrp REAL,
-    discount REAL,
-    rating REAL,
-    reviews INTEGER,
-    link TEXT,
-    image TEXT,
-    score REAL,
-    timestamp TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        search_id INTEGER,
+        title TEXT,
+        store TEXT,
+        price REAL,
+        rating REAL,
+        reviews INTEGER,
+        link TEXT,
+        image TEXT,
+        score REAL,
+        created_at TEXT
     )""")
-
     cur.execute("""
     CREATE TABLE IF NOT EXISTS purchases (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,17 +81,16 @@ def log_search(query):
     db_conn.commit()
     return cur.lastrowid
 
-def log_results(search_id, results):
+def log_results_db(search_id, results):
     cur = db_conn.cursor()
     ts = datetime.utcnow().isoformat()
     for r in results:
         cur.execute("""
             INSERT INTO results
-            (search_id, title, store, price, mrp, discount, rating, reviews, link, image, score, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (search_id, r.get("title"), r.get("store"), r.get("price"), r.get("mrp"),
-              r.get("discount"), r.get("rating") or 0, r.get("reviews") or 0,
-              r.get("link"), r.get("image"), r.get("score") or 0, ts))
+            (search_id, title, store, price, rating, reviews, link, image, score, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (search_id, r.get("title"), r.get("store"), r.get("price"), r.get("rating") or 0,
+              r.get("reviews") or 0, r.get("link"), r.get("image"), r.get("score") or 0, ts))
     db_conn.commit()
 
 def log_purchase(result_row_id, search_id, bought_price):
@@ -100,22 +100,147 @@ def log_purchase(result_row_id, search_id, bought_price):
                 (result_row_id, search_id, bought_price, ts))
     db_conn.commit()
 
-# ---------- SerpAPI fetch (extract link + possible MRP) ----------
-def extract_price_value(raw):
-    """Try to parse numeric price from various SerpAPI formats"""
-    if raw is None:
+# ---------- CSV logging ----------
+def append_results_csv(search_query, results, csv_path=CSV_PATH):
+    """
+    Append results to CSV. Columns: timestamp, query, title, store, price, rating, reviews, link, image, score
+    """
+    rows = []
+    ts = datetime.utcnow().isoformat()
+    for r in results:
+        rows.append({
+            "logged_at": ts,
+            "query": search_query,
+            "title": r.get("title"),
+            "store": r.get("store"),
+            "price": r.get("price"),
+            "rating": r.get("rating"),
+            "reviews": r.get("reviews"),
+            "link": r.get("link"),
+            "image": r.get("image"),
+            "score": r.get("score")
+        })
+    df = pd.DataFrame(rows)
+    header = not os.path.exists(csv_path)
+    df.to_csv(csv_path, mode="a", index=False, header=header, encoding="utf-8")
+
+# ---------- Utilities & robust price parsing ----------
+def parse_price_to_float(price_raw):
+    """
+    Robust price parser: remove currency symbols, commas, and extract first reasonable number.
+    Returns None if parsing fails.
+    """
+    if price_raw is None:
         return None
-    s = str(raw)
-    # Remove common currency chars
-    cleaned = s.replace("₹", "").replace("Rs.", "").replace(",", "").strip()
-    # keep digits and dot
-    num = ''.join(ch for ch in cleaned if (ch.isdigit() or ch == '.'))
+    s = str(price_raw)
+    # replace common separators and currency words
+    s = s.replace(",", "").replace("\u20b9", "").replace("Rs.", "").replace("₹", "").strip()
+    # extract first number-looking chunk
+    match = re.search(r"(\d+[\.]?\d*)", s)
+    if not match:
+        return None
     try:
-        return float(num) if num else None
+        value = float(match.group(1))
+        if value <= 0:
+            return None
+        return value
     except:
         return None
 
-def fetch_serpapi(query, serpapi_key, max_results=30):
+def tokenize(text):
+    if not text:
+        return []
+    # lowercase, remove punctuation, split
+    t = re.sub(r"[^a-zA-Z0-9\s]", " ", str(text).lower())
+    tokens = [tok for tok in t.split() if len(tok) >= 3]
+    return tokens
+
+# ---------- Smart filtering ----------
+# Keyword-based minimum price thresholds for categories likely to be expensive devices.
+# These are conservative defaults and can be tweaked.
+KEYWORD_MIN_PRICE = {
+    "phone": 2000,
+    "iphone": 5000,
+    "samsung": 2000,
+    "laptop": 5000,
+    "macbook": 20000,
+    "tv": 5000,
+    "camera": 5000,
+    "dslr": 10000,
+    "playstation": 5000,
+    "xbox": 5000,
+    "airpod": 1000,
+    "refrigerator": 8000
+}
+
+def estimate_min_price_from_query(query):
+    q = query.lower()
+    for k, v in KEYWORD_MIN_PRICE.items():
+        if k in q:
+            return v
+    return 50  # default minimum
+
+def filter_results_for_query(results, query):
+    """
+    Filters out results that are likely unrelated / accessory / erroneous low-priced items.
+    Heuristics:
+      - price must parse
+      - title must have token overlap with query (at least 1 token of length >=3)
+      - price must be >= estimated_min_price_by_query OR >= median_price*0.4
+      - price must be > absolute_floor (like Rs 10)
+    """
+    parsed = []
+    # parse prices and tokens
+    for r in results:
+        price = parse_price_to_float(r.get("price") or r.get("raw_price") or "")
+        if price is None:
+            continue
+        r["price"] = price
+        r["tokens_title"] = tokenize(r.get("title") or "")
+        parsed.append(r)
+    if not parsed:
+        return []
+
+    prices = [r["price"] for r in parsed]
+    median_price = float(pd.Series(prices).median())
+    estimated_min = estimate_min_price_from_query(query)
+    absolute_floor = 10.0
+
+    filtered = []
+    q_tokens = set(tokenize(query))
+    for r in parsed:
+        # token overlap: require at least 1 token from query present in title OR store contains brand
+        overlap = len(q_tokens.intersection(set(r["tokens_title"])))
+        passes_overlap = overlap >= 1
+        # price thresholds
+        p = r["price"]
+        passes_min_by_keyword = p >= estimated_min
+        passes_relative = p >= (median_price * 0.4)
+        passes_floor = p >= absolute_floor
+        # Accept if either token overlap AND (passes_min_by_keyword or passes_relative)
+        if passes_overlap and passes_floor and (passes_min_by_keyword or passes_relative):
+            filtered.append(r)
+        else:
+            # If title strongly matches (contains full query phrase) allow
+            title_lower = (r.get("title") or "").lower()
+            if query.lower() in title_lower and passes_floor and p >= (median_price * 0.25):
+                filtered.append(r)
+            else:
+                # skip
+                continue
+    # dedupe by (normalized title + store)
+    seen = set()
+    final = []
+    for r in filtered:
+        key = (str(r.get("title","")).strip().lower()[:140], str(r.get("store","")).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        final.append(r)
+    return final
+
+# ---------- SerpAPI fetch ----------
+def fetch_serpapi(query, serpapi_key, max_results=MAX_SERP_RESULTS):
     url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_shopping",
@@ -123,60 +248,26 @@ def fetch_serpapi(query, serpapi_key, max_results=30):
         "api_key": serpapi_key,
         "num": max_results
     }
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        data = r.json()
-    except Exception as e:
-        st.error(f"SerpAPI request failed: {e}")
-        return []
-
+    r = requests.get(url, params=params, timeout=20)
+    data = r.json()
     out = []
     for item in data.get("shopping_results", []):
-        # Common fields
+        # serpapi fields: price, title, link, source, thumbnail, rating, reviews
+        raw_price = item.get("price") or item.get("raw_price") or ""
         title = item.get("title") or item.get("product_title") or ""
-        store = item.get("source") or item.get("store") or ""
         link = item.get("link") or item.get("product_link") or ""
-        image = item.get("thumbnail") or item.get("image") or ""
-        rating = 0
-        reviews = 0
-        try:
-            rating = float(item.get("rating") or 0)
-        except:
-            rating = 0
-        try:
-            reviews = int(item.get("reviews") or 0)
-        except:
-            reviews = 0
-
-        # Price and possible MRP/original price
-        price_val = extract_price_value(item.get("price") or item.get("extracted_price") or item.get("price_with_currency"))
-        # try some other possible keys
-        mrp_val = None
-        # SerpAPI sometimes returns 'original_price' or 'retail_price' or 'prices'
-        for k in ("original_price", "retail_price", "mrp", "original_price_with_currency"):
-            if k in item:
-                mrp_val = extract_price_value(item.get(k))
-                if mrp_val:
-                    break
-        # fallback: some items have 'savings' or 'discount' but not original price
-        # compute discount if both found
-        discount = None
-        if price_val and mrp_val and mrp_val > 0:
-            try:
-                discount = round((mrp_val - price_val) / mrp_val * 100, 2)
-            except:
-                discount = None
-
+        store = item.get("source") or item.get("store") or item.get("merchant") or ""
+        rating = float(item.get("rating") or 0)
+        reviews = int(item.get("reviews") or 0)
+        thumb = item.get("thumbnail") or ""
         out.append({
             "title": title,
             "store": store,
-            "price": price_val or 0.0,
-            "mrp": mrp_val,
-            "discount": discount,
+            "raw_price": raw_price,
+            "link": link,
             "rating": rating,
             "reviews": reviews,
-            "link": link,
-            "image": image
+            "image": thumb
         })
     return out
 
@@ -206,7 +297,7 @@ def train_lgb_and_score(feature_df, db_conn_local):
     X = df_train[feature_cols]
     y = df_train["bought"]
     lgb_train = lgb.Dataset(X, label=y)
-    params = {"objective":"binary","metric":"binary_logloss","verbosity": -1}
+    params = {"objective":"binary", "metric":"binary_logloss", "verbosity": -1}
     model = lgb.train(params, lgb_train, num_boost_round=100)
     X_new = feature_df[feature_cols].fillna(0)
     preds = model.predict(X_new)
@@ -216,7 +307,7 @@ def get_ranked_results(results):
     df = pd.DataFrame(results)
     if df.empty:
         return df
-    features = df[["price", "rating", "reviews"]].fillna(0)
+    features = df[["price","rating","reviews"]].fillna(0)
     ml = train_lgb_and_score(features, db_conn)
     if ml:
         preds, model = ml
@@ -227,137 +318,130 @@ def get_ranked_results(results):
     df = df.sort_values(by="score", ascending=False).reset_index(drop=True)
     return df
 
-# ---------- HTML helper for button-style links ----------
-def html_open_button(url, label="Open", width_px=150):
-    # safe-escape URL and label
-    url_esc = html.escape(url, quote=True)
-    label_esc = html.escape(label)
-    html_button = f"""
-    <button style="
-        background-color:#0f62fe;
-        color:white;
-        border-radius:6px;
-        padding:8px 12px;
-        border:none;
-        cursor:pointer;
-        font-weight:600;
-        ">
-      <a href="{url_esc}" target="_blank" style="color:inherit; text-decoration:none;">{label_esc}</a>
-    </button>
-    """
-    return html_button
-
 # ---------- UI ----------
-st.markdown("Type a product name and press Enter. Each result shows a button to open the product page (opens in a new tab). Mark 'Bought' to label purchases for future ML training.")
+st.markdown("Type a product name and press Enter. The app uses SerpAPI (Google Shopping). We now filter out obvious accessory results and save everything to CSV. Use the blue button to open product pages.")
 
-query = st.text_input("Enter product name (e.g. iPhone 13, Bluetooth speaker)")
+query = st.text_input("Enter product name (e.g., iPhone 13, JBL earphones, laptop)")
 
 if query:
-    with st.spinner("Fetching prices from SerpAPI..."):
-        serp_results = fetch_serpapi(query, SERPAPI_KEY)
+    with st.spinner("Fetching results from SerpAPI..."):
+        raw_results = fetch_serpapi(query, SERPAPI_KEY, MAX_SERP_RESULTS)
 
-    # dedupe by title+store lightly
-    seen = set()
-    unique = []
-    for r in serp_results:
-        key = (str(r.get("title",""))[:140].strip().lower(), str(r.get("store","")).strip().lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(r)
+    # apply filtering
+    filtered = filter_results_for_query(raw_results, query)
+    if not filtered:
+        st.warning("No relevant results found after filtering. Try adding brand or model number (e.g., 'iPhone 14 128GB').")
+    else:
+        # rank
+        ranked_df = get_ranked_results(filtered)
 
-    ranked_df = get_ranked_results(unique)
+        # Prepare results for logging and CSV
+        search_id = log_search(query)
+        logged = []
+        for _, row in ranked_df.iterrows():
+            rec = {
+                "title": row.get("title"),
+                "store": row.get("store"),
+                "price": float(row.get("price") or 0),
+                "rating": float(row.get("rating") or 0),
+                "reviews": int(row.get("reviews") or 0),
+                "link": row.get("link") or "",
+                "image": row.get("image") or "",
+                "score": float(row.get("score") or 0)
+            }
+            logged.append(rec)
 
-    # Log search + results
-    search_id = log_search(query)
-    logged = []
-    for _, row in ranked_df.iterrows():
-        rec = {
-            "title": row.get("title"),
-            "store": row.get("store"),
-            "price": float(row.get("price") or 0),
-            "mrp": float(row.get("mrp")) if row.get("mrp") else None,
-            "discount": float(row.get("discount")) if row.get("discount") else None,
-            "rating": float(row.get("rating") or 0),
-            "reviews": int(row.get("reviews") or 0),
-            "link": row.get("link") or "",
-            "image": row.get("image") or "",
-            "score": float(row.get("score") or 0)
-        }
-        logged.append(rec)
-    log_results(search_id, logged)
+        # DB + CSV logging
+        log_results_db(search_id, logged)
+        append_results_csv(query, logged, CSV_PATH)
 
-    st.subheader("🏆 Top 3 Deals")
-    top3 = ranked_df.head(3)
-    for idx, row in top3.reset_index(drop=True).iterrows():
-        cols = st.columns([1,4,1])
-        with cols[0]:
-            if row.get("image"):
-                st.image(row.get("image"), width=120)
-        with cols[1]:
-            st.markdown(f"**{row.get('title')}**")
-            price_text = f"₹{int(row.get('price')):,}" if row.get('price') else "N/A"
-            st.write(f"Store: **{row.get('store') or 'Unknown'}** — Price: **{price_text}**")
-            if row.get("mrp"):
-                st.write(f"MRP: ₹{int(row.get('mrp')):,} — Discount: {row.get('discount')}%")
-            if row.get("rating"):
-                st.write(f"Rating: {row.get('rating')} ⭐ ({row.get('reviews')} reviews)")
-        with cols[2]:
-            link = row.get("link") or ""
-            if link:
-                html_btn = html_open_button(link, label=f"Open on {row.get('store') or 'Store'}")
-                st.markdown(html_btn, unsafe_allow_html=True)
-            # allow marking bought
-            if st.button(f"Bought — #{idx+1}", key=f"buy_top_{idx}_{time.time()}"):
-                cur = db_conn.cursor()
-                cur.execute("SELECT id FROM results WHERE search_id = ? AND title = ? AND price = ? ORDER BY id DESC LIMIT 1",
-                            (search_id, row.get("title"), float(row.get("price") or 0)))
-                res = cur.fetchone()
-                if res:
-                    log_purchase(res[0], search_id, float(row.get("price") or 0))
-                    st.success("Purchase recorded — will be used for future ML training.")
-                else:
-                    st.error("Could not record purchase (result not found).")
+        st.subheader("🏆 Top 3 Deals")
+        top3 = ranked_df.head(3)
+        for idx, row in top3.reset_index(drop=True).iterrows():
+            cols = st.columns([1,5,1])
+            with cols[0]:
+                if row.get("image"):
+                    st.image(row.get("image"), width=120)
+            with cols[1]:
+                st.markdown(f"**{row.get('title')}**")
+                st.write(f"Store: **{row.get('store')}** — Price: **₹{row.get('price'):,}**")
+                if row.get("rating"):
+                    st.write(f"Rating: {row.get('rating')} ⭐ ({row.get('reviews')} reviews)")
+            with cols[2]:
+                # Button that opens link in new tab using an HTML anchor styled as a button
+                link = row.get("link") or "#"
+                safe_link = html.escape(str(link), quote=True)
+                button_html = f"""
+                <a href="{safe_link}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                    <div style="
+                        display:inline-block;
+                        background-color:#1f77b4;
+                        color:white;
+                        padding:8px 12px;
+                        border-radius:6px;
+                        font-weight:600;
+                        text-align:center;
+                        ">
+                        Open Product
+                    </div>
+                </a>
+                """
+                st.components.v1.html(button_html, height=50)
 
-    st.markdown("---")
-    st.subheader("📦 All Results (ranked)")
-    display_df = ranked_df[["title","store","price","mrp","discount","rating","reviews","score","link"]].reset_index(drop=True)
-    st.dataframe(display_df)
+        st.markdown("---")
+        st.subheader("📦 All Results (ranked)")
+        display_df = ranked_df[["title","store","price","rating","reviews","score","link"]].reset_index(drop=True)
+        st.dataframe(display_df)
 
-    st.markdown("---")
-    st.info("Use the 'Open' buttons next to each top result, or mark any row below as 'Bought' to create a label for training.")
+        st.markdown("---")
+        st.info("Use the 'Open Product' buttons beside Top 3 to open the store page. The CSV is appended with every search and can be downloaded below.")
 
-    # show rows with buttons
-    for i, row in display_df.iterrows():
-        cols = st.columns([4,1,1,1,2])
-        with cols[0]:
-            st.write(f"**{row['title'][:180]}** — {row['store']} — ₹{int(row['price']) if row['price'] else 'N/A'}")
-            if row['mrp']:
-                st.write(f"MRP ₹{int(row['mrp'])} — {row['discount']}% off")
-        with cols[1]:
-            st.write(f"{row['rating']} ⭐")
-        with cols[2]:
-            st.write(f"{int(row['reviews'])} rev")
-        with cols[3]:
-            if st.button(f"Buy ✓ (row {i})", key=f"buy_row_{i}_{time.time()}"):
-                cur = db_conn.cursor()
-                cur.execute("SELECT id FROM results WHERE search_id = ? AND title = ? AND price = ? ORDER BY id DESC LIMIT 1",
-                            (search_id, row['title'], float(row['price'] or 0)))
-                res = cur.fetchone()
-                if res:
-                    log_purchase(res[0], search_id, float(row['price'] or 0))
-                    st.success("Purchase recorded.")
-                else:
-                    st.error("Could not find matching result to record purchase.")
-        with cols[4]:
-            if row['link']:
-                html_btn = html_open_button(row['link'], label="Open Product Page")
-                st.markdown(html_btn, unsafe_allow_html=True)
+        # Show table with small open buttons per row
+        st.markdown("### Open / Mark Bought")
+        for i, row in display_df.iterrows():
+            cols = st.columns([6,1,1,1])
+            with cols[0]:
+                st.write(f"**{row['title'][:200]}** — {row['store']} — ₹{row['price']:,}")
+            with cols[1]:
+                # small open button
+                link = row['link'] or "#"
+                safe_link = html.escape(str(link), quote=True)
+                small_btn = f"""
+                <a href="{safe_link}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                    <div style="
+                        display:inline-block;
+                        background-color:#2b8a3e;
+                        color:white;
+                        padding:6px 10px;
+                        border-radius:6px;
+                        font-weight:600;
+                        text-align:center;
+                        font-size:13px;
+                        ">
+                        Open
+                    </div>
+                </a>
+                """
+                st.components.v1.html(small_btn, height=38)
+            with cols[2]:
+                if st.button(f"Bought ✓ (row {i})", key=f"buy_row_{i}_{time.time()}"):
+                    # find result_id in DB (recent)
+                    cur = db_conn.cursor()
+                    cur.execute("SELECT id FROM results WHERE search_id = ? AND title = ? AND price = ? ORDER BY id DESC LIMIT 1",
+                                (search_id, row['title'], float(row['price'] or 0)))
+                    res = cur.fetchone()
+                    if res:
+                        log_purchase(res[0], search_id, float(row['price'] or 0))
+                        st.success("Purchase recorded (for model training).")
+                    else:
+                        st.error("Could not find matching result to record purchase.")
+            with cols[3]:
+                if row['link']:
+                    st.markdown(f"[Open link]({row['link']})")
 
-# ---------- Admin / Train ----------
+# ---------- Admin / Model ----------
 st.markdown("---")
-st.header("⚙️ Admin & Model")
-
+st.header("⚙️ Admin & Data")
 cur = db_conn.cursor()
 cur.execute("SELECT COUNT(*) FROM searches")
 search_count = cur.fetchone()[0]
@@ -366,6 +450,22 @@ result_count = cur.fetchone()[0]
 cur.execute("SELECT COUNT(*) FROM purchases")
 purchase_count = cur.fetchone()[0]
 st.write(f"Searches: **{search_count}** — Results stored: **{result_count}** — Purchases labeled: **{purchase_count}**")
+
+if st.button("Download CSV results"):
+    try:
+        with open(CSV_PATH, "rb") as f:
+            data = f.read()
+        st.download_button("Download results_log.csv", data, file_name=Path(CSV_PATH).name)
+    except Exception as e:
+        st.error(f"Cannot read CSV: {e}")
+
+if st.button("Download SQLite DB"):
+    try:
+        with open(DB_PATH, "rb") as f:
+            data = f.read()
+        st.download_button("Download DB file", data, file_name=Path(DB_PATH).name)
+    except Exception as e:
+        st.error(f"Cannot read DB: {e}")
 
 if st.button("Force-train LightGBM (if enough labels)"):
     if not LGB_AVAILABLE:
@@ -391,12 +491,4 @@ if st.button("Force-train LightGBM (if enough labels)"):
             model.save_model("lgb_model.txt")
             st.success("LightGBM model trained and saved as lgb_model.txt")
 
-if st.button("Download SQLite DB"):
-    try:
-        with open(DB_PATH, "rb") as f:
-            data = f.read()
-        st.download_button("Download DB file", data, file_name=Path(DB_PATH).name)
-    except Exception as e:
-        st.error(f"Cannot read DB: {e}")
-
-st.markdown("Notes: Buttons open product pages in a new tab. The app will use a heuristic ranking until you gather enough labeled purchases to train a LightGBM model.")
+st.markdown("Notes: Filtering heuristics try to remove accessory/irrelevant low-price results. If you see a good product filtered out, tweak KEYWORD_MIN_PRICE or the relative threshold (median*0.4) in the code.")
