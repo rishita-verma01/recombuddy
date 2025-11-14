@@ -13,7 +13,7 @@ def fetch_prices(query):
     params = {
         "engine": "google_shopping",
         "q": query,
-        "api_key": SERPAPI_KEY,
+        "b8facb5f7c78f0f5ef30abd7a0a09c45a0ea4877": SERPAPI_KEY,
     }
 
     response = requests.get(url, params=params)
