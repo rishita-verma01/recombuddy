@@ -1,6 +1,10 @@
 # app.py
-# Streamlit Price Compare (India-only) — robust logging, embedding support, working product link buttons
-# Drop into your Streamlit repo. Add SERPAPI_KEY in Streamlit Secrets.
+# India-only price compare — NO product links stored or shown anywhere.
+# Features: SerpAPI (India), price cleaning, USD->INR conversion, embeddings (optional),
+# heuristic/LightGBM ranking, SQLite logging (no link), CSV export (no link), alerts, history chart.
+#
+# Add SERPAPI_KEY to Streamlit Secrets before running.
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -8,8 +12,6 @@ import sqlite3
 import os
 from datetime import datetime
 from pathlib import Path
-import time
-import math
 import json
 import numpy as np
 import traceback
@@ -38,7 +40,7 @@ except Exception:
 
 # ---------------- CONFIG ----------------
 DB_PATH = "price_compare.db"
-CSV_PATH = "search_results.csv"
+CSV_PATH = "search_results.csv"      # saved results (no link)
 ALERTS_CSV = "alerts.csv"
 MIN_LABELS_TO_TRAIN = 10
 USD_TO_INR_API = "https://api.exchangerate-api.com/v4/latest/USD"
@@ -147,8 +149,8 @@ INDIAN_STORES = [
 ]
 # -----------------------------------------
 
-st.set_page_config(page_title="India Price Compare — Robust", layout="wide")
-st.title("🇮🇳 Best Deal Finder — Robust Logging + Embeddings + Working Links")
+st.set_page_config(page_title="India Price Compare — No Links", layout="wide")
+st.title("🇮🇳 Best Deal Finder — Links Removed (India-only)")
 
 # Load SerpAPI Key
 SERPAPI_KEY = ""
@@ -184,7 +186,7 @@ def ensure_embedding_column(conn):
         except Exception as e:
             print("Could not add embedding column:", e)
 
-# Initialize DB schema (creates tables if not exist)
+# Initialize DB schema (no link column)
 def init_db_schema(conn):
     cur = conn.cursor()
     cur.execute("""
@@ -203,7 +205,6 @@ def init_db_schema(conn):
         price REAL,
         rating REAL,
         reviews INTEGER,
-        link TEXT,
         image TEXT,
         score REAL,
         created_at TEXT
@@ -254,7 +255,7 @@ def safe_jsonify(obj):
             return json.dumps(cleaned)
         if isinstance(obj, (np.generic,)):
             return json.dumps(float(obj))
-        # already a JSON string?
+        # already JSON?
         if isinstance(obj, str):
             try:
                 json.loads(obj)
@@ -337,7 +338,7 @@ def cosine_sim(a, b):
         return -1.0
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
-# ---------------- DB logging (robust) ----------------
+# ---------------- DB logging (robust, no link) ----------------
 def log_search(q):
     cur = db_conn.cursor()
     t = datetime.utcnow().isoformat()
@@ -348,20 +349,20 @@ def log_search(q):
 def log_results(search_id, rows):
     """
     Robust logging: detects presence of 'embedding' column and inserts accordingly.
-    Serializes embeddings safely.
+    Embeddings are serialized. No 'link' field is inserted or stored.
     """
     cur = db_conn.cursor()
     t = datetime.utcnow().isoformat()
     has_emb = table_has_column(db_conn, "results", "embedding")
     if has_emb:
         sql = """
-        INSERT INTO results(search_id,title,store,price,rating,reviews,link,image,score,embedding,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO results(search_id,title,store,price,rating,reviews,image,score,embedding,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """
     else:
         sql = """
-        INSERT INTO results(search_id,title,store,price,rating,reviews,link,image,score,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO results(search_id,title,store,price,rating,reviews,image,score,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
         """
 
     for r in rows:
@@ -380,7 +381,6 @@ def log_results(search_id, rows):
                 reviews = int(r.get("reviews")) if r.get("reviews") not in (None, "") else None
             except:
                 reviews = None
-            link = str(r.get("link") or "")[:2000]
             image = str(r.get("image") or "")[:2000]
             try:
                 score = float(r.get("score")) if r.get("score") is not None else None
@@ -390,11 +390,11 @@ def log_results(search_id, rows):
             if has_emb:
                 emb = r.get("embedding", None)
                 emb_json = safe_jsonify(emb)
-                cur.execute(sql, (search_id, title, store, price, rating, reviews, link, image, score, emb_json, t))
+                cur.execute(sql, (search_id, title, store, price, rating, reviews, image, score, emb_json, t))
             else:
-                cur.execute(sql, (search_id, title, store, price, rating, reviews, link, image, score, t))
+                cur.execute(sql, (search_id, title, store, price, rating, reviews, image, score, t))
         except Exception:
-            # log error and continue
+            # log and continue
             print("=== log_results ERROR ===")
             print(traceback.format_exc())
             print("Row (sanitized):", {"title": title, "store": store, "price": price, "rating": rating, "reviews": reviews})
@@ -409,7 +409,20 @@ def log_purchase(result_row_id, search_id, bought_price):
     db_conn.commit()
 
 def append_to_csv(rows):
-    df = pd.DataFrame(rows)
+    # Remove any link fields from rows (defensive)
+    safe_rows = []
+    for r in rows:
+        safe_rows.append({
+            "title": r.get("title"),
+            "store": r.get("store"),
+            "price": r.get("price"),
+            "rating": r.get("rating"),
+            "reviews": r.get("reviews"),
+            "image": r.get("image"),
+            "score": r.get("score"),
+            "embedding": r.get("embedding") if r.get("embedding") is not None else None
+        })
+    df = pd.DataFrame(safe_rows)
     file_exists = os.path.isfile(CSV_PATH)
     df.to_csv(CSV_PATH, mode="a", header=not file_exists, index=False)
 
@@ -432,7 +445,7 @@ def log_alert(search_query, title, store, ttype, tval, price):
     }])
     df.to_csv(ALERTS_CSV, mode="a", header=not os.path.exists(ALERTS_CSV), index=False)
 
-# ---------------- SerpAPI fetch ----------------
+# ---------------- SerpAPI fetch (no link) ----------------
 def fetch_serpapi(query, selected_stores=None, max_results=30):
     url = "https://serpapi.com/search.json"
     params = {
@@ -469,7 +482,6 @@ def fetch_serpapi(query, selected_stores=None, max_results=30):
             "price": float(price),
             "rating": float(item.get("rating") or 0),
             "reviews": int(item.get("reviews") or 0),
-            "link": item.get("link") or "",
             "image": item.get("thumbnail") or "",
             "embedding": emb
         })
@@ -563,7 +575,7 @@ with st.sidebar:
     st.markdown("---")
     st.write(f"USD→INR rate: {usd_inr_rate:.2f} (live)")
 
-st.info("Product link buttons open in a new tab. Historical matching uses embeddings if available; otherwise token-overlap.")
+st.info("Product links have been removed. Historical matching uses embeddings if available; otherwise token-overlap.")
 
 query = st.text_input("Enter product name (India only)", placeholder="e.g. iPhone 15, Samsung QLED TV, JBL Flip 6")
 
@@ -589,7 +601,6 @@ if query:
                 "price": float(r["price"]),
                 "rating": float(r["rating"]),
                 "reviews": int(r["reviews"]),
-                "link": r["link"],
                 "image": r["image"],
                 "score": float(r["score"]),
                 "embedding": r.get("embedding")
@@ -610,18 +621,7 @@ if query:
                 st.write(f"**Store:** {row['store']}")
                 st.write(f"**Price:** ₹{int(row['price']):,}")
                 st.write(f"⭐ {row['rating']} ({row['reviews']} reviews)")
-                if row.get("link"):
-                    st.markdown(f"[Open link in new tab]({row['link']})")
             with col3:
-                link = row.get("link") or "#"
-                safe_html = f"""
-                <a href="{link}" target="_blank" rel="noopener">
-                  <button style="background-color:#4CAF50;color:white;padding:8px 12px;border:none;border-radius:6px;cursor:pointer;">
-                    Open Product Page
-                  </button>
-                </a>
-                """
-                st.markdown(safe_html, unsafe_allow_html=True)
                 if st.button(f"Show Price History — {i}", key=f"hist_{i}"):
                     emb = row.get("embedding")
                     hist_df = fetch_price_history_for_result(row["title"], row["store"], current_embedding=emb)
@@ -633,7 +633,7 @@ if query:
 
         st.markdown("---")
         st.subheader("📦 All Results (ranked)")
-        display_df = df[["title", "store", "price", "rating", "reviews", "score", "link"]].copy()
+        display_df = df[["title", "store", "price", "rating", "reviews", "score", "image"]].copy()
         st.dataframe(display_df)
 
 # ---------------- Admin ----------------
