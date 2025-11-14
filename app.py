@@ -6,7 +6,7 @@ st.set_page_config(page_title="Best Deal Finder", layout="wide")
 
 st.title("🛒 Best Deal Finder (Free Price Comparison Tool)")
 
-SERPAPI_KEY = st.secrets["SERPAPI_KEY"]  # Add in Streamlit Secrets
+SERPAPI_KEY = st.secrets["b8facb5f7c78f0f5ef30abd7a0a09c45a0ea4877"]  # Add in Streamlit Secrets
 
 def fetch_prices(query):
     url = "https://serpapi.com/search.json"
