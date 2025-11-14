@@ -1,5 +1,10 @@
 streamlit
-requests
 pandas
-lightgbm  
+requests
+numpy
+lightgbm
+sentencepiece
+tensorflow
+tensorflow-hub
 sentence-transformers
+torch
