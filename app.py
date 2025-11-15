@@ -360,7 +360,7 @@ with st.sidebar:
     st.markdown("---")
     st.write(f"USD→INR: {USD_INR:.2f} (live)")
 
-query = st.text_input("Enter product name (India only)", placeholder="Jo Dhundhoge woh milega")
+query = st.text_input("Enter product name (India only)", placeholder="Search smarter. Compare instantly")
 
 if query:
     with st.spinner("Fetching India results via SerpAPI..."):
