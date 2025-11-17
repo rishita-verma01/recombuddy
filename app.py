@@ -347,6 +347,19 @@ st.markdown("""
     border-radius: 8px;
     text-decoration: none;
 }
+table.recom-table {
+    border-collapse: collapse;
+    width: 100%;
+}
+table.recom-table th, table.recom-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+}
+table.recom-table th {
+    background: #fafafa;
+    font-weight: 600;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -407,7 +420,11 @@ if query:
         st.markdown("---")
         st.subheader("📦 All Results (ranked)")
         display_df = df[["uid","title","store","price","rating","reviews","score","created_at","link"]].copy()
-        st.dataframe(display_df)
+        display_df["price"] = display_df["price"].apply(lambda x: f"₹{int(x):,}")
+        display_df["link"] = display_df["link"].fillna("")
+        display_df["link"] = display_df["link"].apply(lambda l: f"<div class='pink-button'><a href='{l}' target='_blank'>View Product</a></div>" if l else "")
+        html_table = display_df.to_html(classes="recom-table", escape=False, index=False)
+        st.markdown(html_table, unsafe_allow_html=True)
         st.markdown("---")
         st.subheader("📈 Price History (from cumulative dataset)")
         pick = st.selectbox("Select a result (uid) to view its history", options=list(display_df["uid"].values))
