@@ -30,7 +30,6 @@ try:
 except Exception:
     EMBED_AVAILABLE = False
 
-# Optional LightGBM
 try:
     import lightgbm as lgb
     LGB_AVAILABLE = True
@@ -43,9 +42,9 @@ if hasattr(st, "secrets"):
 if not SERPAPI_KEY:
     SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
-CURRENT_CSV = "current_search.csv"   
-ALL_RESULTS_CSV = "all_results.csv"  
-PURCHASES_CSV = "purchases.csv"      
+CURRENT_CSV = "current_search.csv"
+ALL_RESULTS_CSV = "all_results.csv"
+PURCHASES_CSV = "purchases.csv"
 MIN_LABELS_TO_TRAIN = 10
 USD_TO_INR_API = "https://api.exchangerate-api.com/v4/latest/USD"
 
@@ -134,7 +133,7 @@ def clean_price(raw_price):
     if filtered == "":
         return None
     price = float(filtered)
-    if price < 50:  
+    if price < 50:
         return None
     return price
 
@@ -168,7 +167,6 @@ def title_token_match(a, b):
     overlap = a_tokens.intersection(b_tokens)
     return len(overlap) >= max(1, min(3, int(0.4 * min(len(a_tokens), len(b_tokens)))))
 
-
 def derive_key(password: str, salt: bytes, iterations: int = 200_000):
     if not CRYPTO_AVAILABLE:
         return None
@@ -182,9 +180,6 @@ def derive_key(password: str, salt: bytes, iterations: int = 200_000):
     return kdf.derive(password.encode("utf-8"))
 
 def encrypt_bytes(password: str, plaintext_bytes: bytes) -> bytes:
-    """
-    Returns: header (b'CSVENC1') + salt(16) + iv(16) + ciphertext
-    """
     if not CRYPTO_AVAILABLE:
         return None
     salt = os.urandom(16)
@@ -197,31 +192,25 @@ def encrypt_bytes(password: str, plaintext_bytes: bytes) -> bytes:
     ct = encryptor.update(padded) + encryptor.finalize()
     header = b"CSVENC1"
     return header + salt + iv + ct
+
 def append_all_results(rows, search_query):
-    """
-    rows: list of dicts with fields:
-      uid,title,store,price,rating,reviews,score,embedding,created_at,search_query
-    Appends to ALL_RESULTS_CSV (creates if missing).
-    """
     df = pd.DataFrame(rows)
     df["search_query"] = search_query
     file_exists = os.path.exists(ALL_RESULTS_CSV)
     df.to_csv(ALL_RESULTS_CSV, mode="a", header=not file_exists, index=False)
 
 def save_current_search_csv(rows):
-    """
-    rows: list of dicts — write current_search CSV (overwrite).
-    """
     df = pd.DataFrame(rows)
     df.to_csv(CURRENT_CSV, index=False)
 
 def load_all_results_df():
     if not os.path.exists(ALL_RESULTS_CSV):
-        return pd.DataFrame(columns=["uid","title","store","price","rating","reviews","score","embedding","created_at","search_query"])
+        return pd.DataFrame(columns=["uid","title","store","price","rating","reviews","score","embedding","created_at","search_query","link"])
     try:
         return pd.read_csv(ALL_RESULTS_CSV)
     except Exception:
-        return pd.DataFrame(columns=["uid","title","store","price","rating","reviews","score","embedding","created_at","search_query"])
+        return pd.DataFrame(columns=["uid","title","store","price","rating","reviews","score","embedding","created_at","search_query","link"])
+
 def fetch_serpapi(query, selected_stores=None, max_results=30):
     url = "https://serpapi.com/search.json"
     params = {
@@ -250,6 +239,9 @@ def fetch_serpapi(query, selected_stores=None, max_results=30):
         price = clean_price(raw_price)
         if not price:
             continue
+
+        link = item.get("link") or item.get("product_link") or ""
+
         title = item.get("title") or ""
         emb = compute_embedding(title) if EMBED_AVAILABLE else None
         uid = str(uuid.uuid4())
@@ -262,7 +254,8 @@ def fetch_serpapi(query, selected_stores=None, max_results=30):
             "reviews": int(item.get("reviews") or 0),
             "score": 0.0,
             "embedding": json.dumps(emb) if emb is not None else None,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.utcnow().isoformat(),
+            "link": link
         })
     return out
 
@@ -297,7 +290,6 @@ def fetch_price_history_for(uid, title, store, current_embedding_json=None):
         if matched:
             matches.append((r.get("price"), r.get("created_at")))
     if not matches:
-        # fallback return recent prices for store
         try:
             df_store["created_at"] = pd.to_datetime(df_store["created_at"])
             df_store = df_store.sort_values("created_at")
@@ -346,6 +338,18 @@ def try_train_and_predict_from_csv(rows_feature_df):
 st.set_page_config(page_title="RecomBuddy", layout="wide")
 st.title("RecomBuddy 🇮🇳")
 
+st.markdown("""
+<style>
+.pink-button a {
+    background-color: #ff4da6 !important;
+    color: white !important;
+    padding: 8px 14px;
+    border-radius: 8px;
+    text-decoration: none;
+}
+</style>
+""", unsafe_allow_html=True)
+
 if not SERPAPI_KEY:
     st.error("SERPAPI_KEY required. Add to Streamlit Secrets or set SERPAPI_KEY env var.")
     st.stop()
@@ -386,6 +390,7 @@ if query:
             with cols[0]:
                 st.markdown(f"**{row['title']}**")
                 st.write(f"Store: **{row['store']}** — Price: **₹{int(row['price']):,}**")
+                st.markdown(f"<div class='pink-button'><a href='{row['link']}' target='_blank'>View Product</a></div>", unsafe_allow_html=True)
                 if row.get("rating"):
                     st.write(f"⭐ {row['rating']} ({row['reviews']} reviews)")
             with cols[1]:
@@ -401,7 +406,7 @@ if query:
 
         st.markdown("---")
         st.subheader("📦 All Results (ranked)")
-        display_df = df[["uid","title","store","price","rating","reviews","score","created_at"]].copy()
+        display_df = df[["uid","title","store","price","rating","reviews","score","created_at","link"]].copy()
         st.dataframe(display_df)
         st.markdown("---")
         st.subheader("📈 Price History (from cumulative dataset)")
